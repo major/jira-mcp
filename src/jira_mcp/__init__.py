@@ -1,6 +1,7 @@
-"""A read-only Jira Cloud MCP server designed for concise tool responses ☁️."""
+"""A Jira Cloud MCP server designed for concise tool responses ☁️."""
 
 from jira_mcp import tools as _tools  # noqa: F401 - Import registers the MCP tools.
+from jira_mcp import workflows as _workflows  # noqa: F401 - Import registers the MCP tools.
 from jira_mcp.app import mcp
 
 __all__ = ["main", "mcp"]

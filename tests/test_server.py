@@ -1612,8 +1612,20 @@ async def test_discovery_without_credentials(monkeypatch):
         "get_current_user",
         "search_users",
         "search_issues",
+        "get_issue_transitions",
+        "list_issue_link_types",
+        "get_issue_remote_links",
+        "transition_issue",
+        "create_issue_link",
+        "create_issue_remote_link",
     }
-    assert all(tool.annotations.read_only_hint and not tool.annotations.destructive_hint for tool in tools)
+    writes = {"transition_issue", "create_issue_link", "create_issue_remote_link"}
+    assert all(
+        (not tool.annotations.read_only_hint and tool.annotations.destructive_hint)
+        if tool.name in writes
+        else (tool.annotations.read_only_hint and not tool.annotations.destructive_hint)
+        for tool in tools
+    )
     schemas = {tool.name: tool.model_dump(by_alias=True)["inputSchema"] for tool in tools}
     issue_description = next(tool.description for tool in tools if tool.name == "get_issue")
     assert issue_description is not None

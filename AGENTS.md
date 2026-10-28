@@ -1,7 +1,7 @@
 # Jira MCP ☁️
 
-Read-only FastMCP server for Jira Cloud REST v3. Keep the API task-focused and
-token-lean rather than mirroring every Jira endpoint. No Data Center support.
+Task-focused FastMCP server for Jira Cloud REST v3 with explicit reads and writes.
+Keep the API token-lean rather than mirroring every Jira endpoint. No Data Center support.
 
 ## Toolchain
 
@@ -18,6 +18,7 @@ token-lean rather than mirroring every Jira endpoint. No Data Center support.
 - `config.py`: Cloud URL validation and environment-based API token credentials.
 - `client.py`: async HTTPX2 boundary, TLS, Basic auth, and safe errors.
 - `tools.py`: read-only tools, bounded arguments, and upstream response validation.
+- `workflows.py`: issue transitions, issue links, and remote web links with explicit write annotations.
 - `text.py`: best-effort ADF text extraction with optional raw recovery.
 
 ## Development rules 🧪
