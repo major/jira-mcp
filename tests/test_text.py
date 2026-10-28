@@ -2,7 +2,33 @@
 
 import pytest
 
-from jira_mcp.text import render_text
+from jira_mcp.text import plain_text_to_adf, render_text
+
+
+@pytest.mark.parametrize(
+    ("text", "content"),
+    [
+        ("", [{"type": "paragraph"}]),
+        ("hello", [{"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}]),
+        (
+            "café\r\n\r\n🙂\rfinal\n",
+            [
+                {"type": "paragraph", "content": [{"type": "text", "text": "café"}]},
+                {"type": "paragraph"},
+                {"type": "paragraph", "content": [{"type": "text", "text": "🙂"}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "final"}]},
+                {"type": "paragraph"},
+            ],
+        ),
+        (
+            "**not markdown**",
+            [{"type": "paragraph", "content": [{"type": "text", "text": "**not markdown**"}]}],
+        ),
+    ],
+)
+def test_plain_text_to_adf(text, content):
+    """Preserve normalized line breaks and blank lines without empty text nodes."""
+    assert plain_text_to_adf(text) == {"type": "doc", "version": 1, "content": content}
 
 
 @pytest.mark.parametrize(

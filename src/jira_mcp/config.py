@@ -21,10 +21,11 @@ class Settings:
     email: str
     token: str = field(repr=False)
     timeout: float = 30.0
+    enable_issue_creation: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
-        """Load required credentials and validate the Cloud URL and timeout."""
+        """Load credentials and validate the Cloud URL, timeout, and issue creation setting."""
         required = ("JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")
         values = {name: os.environ.get(name, "") for name in required}
         missing = [name for name, value in values.items() if not value.strip()]
@@ -42,7 +43,18 @@ class Settings:
             msg = "JIRA_TIMEOUT must be a finite positive number"
             raise ConfigError(msg)
 
-        return cls(url=url, email=values["JIRA_EMAIL"].strip(), token=values["JIRA_API_TOKEN"], timeout=timeout)
+        creation = os.environ.get("JIRA_ENABLE_ISSUE_CREATION", "false").lower()
+        if creation not in ("true", "false"):
+            msg = "JIRA_ENABLE_ISSUE_CREATION must be true or false"
+            raise ConfigError(msg)
+
+        return cls(
+            url=url,
+            email=values["JIRA_EMAIL"].strip(),
+            token=values["JIRA_API_TOKEN"],
+            timeout=timeout,
+            enable_issue_creation=creation == "true",
+        )
 
 
 def _cloud_url(value: str) -> str:

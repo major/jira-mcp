@@ -17,9 +17,9 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - `app.py`: FastMCP server, pooled client lifespan, and configuration errors.
 - `config.py`: Cloud URL validation and environment-based API token credentials.
 - `client.py`: async HTTPX2 boundary, TLS, Basic auth, and safe errors.
-- `tools.py`: read-only tools, bounded arguments, and upstream response validation.
+- `tools.py`: read tools, opt-in creation, bounded arguments, and response validation.
 - `workflows.py`: issue transitions, issue links, and remote web links with explicit write annotations.
-- `text.py`: best-effort ADF text extraction with optional raw recovery.
+- `text.py`: plain text to ADF and best-effort extraction with optional raw recovery.
 
 ## Development rules 🧪
 
@@ -30,6 +30,8 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - Keep field IDs and original custom-field values. Names are not unique.
 - Preserve pagination, truncation indicators, and optional unchanged ADF.
 - Never expose token values, upstream error bodies, or transport exception text.
+- Gate creation on the lifespan's issue-creation setting, never retry it automatically,
+  and warn about uncertain outcomes before a caller considers a retry.
 - Keep the README tool table and server instructions aligned with public tools.
 - Prefer simple code and the Rule of Three over speculative abstractions.
 - Write US English, add docstrings, and do not use em dashes.

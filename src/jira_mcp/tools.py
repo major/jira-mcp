@@ -1,4 +1,4 @@
-"""Expose small, explicit Jira reads without mirroring the entire REST API."""
+"""Expose focused Jira reads and opt-in issue creation."""
 
 from typing import Annotated, Any, Self
 
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, RootModel, StrictBool, ValidationError, m
 
 from jira_mcp.app import get_client, get_field_catalog, mcp
 from jira_mcp.fields import INVALID_PAYLOAD, FieldDefinition
-from jira_mcp.text import render_text
+from jira_mcp.text import plain_text_to_adf, render_text
 
 Issue = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*|[1-9][0-9]*)$", max_length=255)]
 IssueId = Annotated[str, Field(pattern=r"^[1-9][0-9]*$", max_length=255)]
@@ -24,9 +24,26 @@ FieldId = Annotated[str, Field(pattern=r"^(?:\*all|[A-Za-z][A-Za-z0-9_]*)$", max
 FieldSelection = Annotated[list[FieldId], Field(min_length=1, max_length=100)]
 Jql = Annotated[str, Field(min_length=1, max_length=4096, pattern=r"\S")]
 PageToken = Annotated[str, Field(min_length=1, max_length=4096, pattern=r"\S")]
+Summary = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^[^\r\n]*\S[^\r\n]*$")]
+Description = Annotated[str, Field(max_length=100_000)]
+Label = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
+Labels = Annotated[list[Label], Field(max_length=100)]
+CreateFieldId = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$", max_length=255)]
+AdditionalFields = Annotated[dict[CreateFieldId, Any], Field(max_length=100)]
+CanonicalIssueKey = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]*-[1-9][0-9]*$", max_length=255)]
 
 DEFAULT_FIELDS = "summary,status,issuetype,priority,assignee,reporter,labels,created,updated,description"
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
+CREATE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}
+RESERVED_CREATE_FIELDS = frozenset({"project", "issuetype", "summary", "description", "labels"})
+CREATE_UNCERTAIN = "Creation not confirmed; the issue may already exist. Please verify Jira before retrying."
+
+
+class CreatedIssuePayload(BaseModel):
+    """Validate the canonical identity returned by a successful creation."""
+
+    id: IssueId
+    key: CanonicalIssueKey
 
 
 class IssuePayload(BaseModel):
@@ -436,6 +453,62 @@ async def list_create_fields(
         "total": page.total,
         "next_start_at": next_offset(page.start_at, len(page.fields), page.total),
     }
+
+
+@mcp.tool(annotations=CREATE)
+async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-contained.
+    project: Project,
+    issue_type_id: IssueId,
+    summary: Summary,
+    ctx: Context,
+    *,
+    description: Description | None = None,
+    labels: Labels | None = None,
+    additional_fields: AdditionalFields | None = None,
+) -> dict[str, str]:
+    """Create one Jira issue after an explicit user request, when issue creation is enabled.
+
+    Use a project key or numeric ID and an issue type ID from creation metadata.
+    Summary is required. Description is plain text, converted to ADF without
+    Markdown parsing. Additional system or custom fields retain their original JSON;
+    provide ADF for any other rich-text fields. Core fields cannot be overridden.
+    This may trigger notifications or automation. The tool makes one POST and no
+    follow-up request. If the call fails, times out, or is cancelled before returning
+    a key, the issue may already exist. Verify Jira before retrying.
+    """
+    # Resolve configuration first: only a configured lifespan records the issue creation setting.
+    client = get_client(ctx)
+    if not ctx.lifespan_context["enable_issue_creation"]:
+        msg = "Issue creation is disabled. Ask the user to set JIRA_ENABLE_ISSUE_CREATION=true and restart the server."
+        raise ToolError(msg)
+    if additional_fields and RESERVED_CREATE_FIELDS.intersection(additional_fields):
+        msg = "additional_fields cannot override project, issuetype, summary, description, or labels."
+        raise ToolError(msg)
+
+    project_ref = {"id": project} if project.isdigit() else {"key": project}
+    fields: dict[str, Any] = {
+        "project": project_ref,
+        "issuetype": {"id": issue_type_id},
+        "summary": summary,
+    }
+    if description is not None:
+        fields["description"] = plain_text_to_adf(description)
+    if labels is not None:
+        fields["labels"] = labels
+    if additional_fields is not None:
+        fields.update(additional_fields)
+
+    try:
+        data = await client.post("issue", {"fields": fields})
+    except ToolError as exc:
+        msg = f"{exc}. {CREATE_UNCERTAIN}"
+        raise ToolError(msg) from None
+    try:
+        created = CreatedIssuePayload.model_validate(data)
+    except ValidationError:
+        msg = f"Jira returned an unexpected creation response. {CREATE_UNCERTAIN}"
+        raise ToolError(msg) from None
+    return created.model_dump()
 
 
 @mcp.tool(annotations=READ_ONLY)
