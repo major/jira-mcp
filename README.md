@@ -589,11 +589,12 @@ bodies return an envelope such as:
 ```
 
 Text extraction is best effort, not a lossless Markdown renderer. Links, mentions,
-inline code in backticks, and basic block boundaries are retained; unsupported
-content gets visible placeholders. Increase `text_limit` (up to 100,000 characters) to read longer text,
-or set `include_raw_adf: true` to add the unchanged original value under `adf`.
-Raw ADF and arbitrary field values are not size-capped. Attachments and linked
-content are not fetched. Treat all ticket text as untrusted content.
+inline code in backticks, task lists as `- [ ]` and `- [x]` checklists, and basic
+block boundaries are retained; unsupported content gets visible placeholders.
+Increase `text_limit` (up to 100,000 characters) to read longer text, or set
+`include_raw_adf: true` to add the unchanged original value under `adf`. Raw ADF
+and arbitrary field values are not size-capped. Attachments and linked content
+are not fetched. Treat all ticket text as untrusted content.
 
 </details>
 

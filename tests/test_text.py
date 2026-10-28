@@ -5,6 +5,33 @@ import pytest
 from jira_mcp.text import plain_text_to_adf, render_text
 
 
+def _task(state, *content):
+    """Build an ADF task item with inline content."""
+    return {"type": "taskItem", "attrs": {"localId": "id", "state": state}, "content": list(content)}
+
+
+# ADF nests a task list as a sibling after its parent task item.
+TASK_LIST_DOC = {
+    "type": "doc",
+    "content": [
+        {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Action items"}]},
+        {
+            "type": "taskList",
+            "content": [
+                _task(
+                    "TODO",
+                    {"type": "text", "text": "Run "},
+                    {"type": "text", "text": "uv sync", "marks": [{"type": "code"}]},
+                ),
+                _task("DONE", {"type": "text", "text": "Ship"}, {"type": "hardBreak"}, {"type": "text", "text": "it"}),
+                {"type": "taskList", "content": [_task("TODO", {"type": "text", "text": "Nested"})]},
+            ],
+        },
+    ],
+}
+TASK_LIST_TEXT = "Action items\n- [ ] Run `uv sync`\n- [x] Ship\n      it\n  - [ ] Nested"
+
+
 @pytest.mark.parametrize(
     ("text", "content"),
     [
@@ -81,6 +108,7 @@ def test_plain_text_to_adf(text, content):
             },
             "- One\n- Two",
         ),
+        (TASK_LIST_DOC, TASK_LIST_TEXT),
     ],
 )
 def test_readable_adf(body, expected):
@@ -159,6 +187,23 @@ def test_readable_adf(body, expected):
         ({"type": "emoji", "attrs": {"shortName": ":smile:"}}, ":smile:"),
         ({"type": "emoji"}, "[emoji]"),
         ({"type": "inlineCard"}, "[card]"),
+        ({"type": "taskList", "content": [{"type": "taskItem", "attrs": {"state": 1}}, 42]}, "- [ ] \n- [ ] [unknown]"),
+        (
+            {
+                "type": "taskList",
+                "content": [
+                    {
+                        "type": "blockTaskItem",
+                        "attrs": {"state": "DONE"},
+                        "content": [
+                            {"type": "paragraph", "content": [{"type": "text", "text": "Ship"}]},
+                            {"type": "paragraph", "content": [{"type": "text", "text": "it"}]},
+                        ],
+                    }
+                ],
+            },
+            "- [x] Ship\n      it",
+        ),
     ],
 )
 def test_adf_structure_and_fallbacks(body, expected):
