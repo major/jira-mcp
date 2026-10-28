@@ -26,6 +26,7 @@ async def jira_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             "client": client,
             "field_catalog": FieldCatalogCache(client),
             "enable_issue_creation": settings.enable_issue_creation,
+            "browse_base": settings.browse_base,
         }
     finally:
         await client.aclose()
@@ -83,10 +84,15 @@ mcp = FastMCP(
         "creation metadata for a project and issue type. These read-only calls require Jira Create issues permission. "
         "Follow next_start_at until null, even after short pages. Each call makes one fresh request; "
         "field names can be duplicated, so use fieldId or key. An omitted defaultValue is not the same as null. "
-        "Use create_issue only after an explicit user request and when JIRA_ENABLE_ISSUE_CREATION=true. "
+        "Create issues only after an explicit user request and when JIRA_ENABLE_ISSUE_CREATION=true; "
+        "create_issue(validate_only=true) previews without writing. "
         "It may trigger Jira notifications and automation. Use discovered issue type and field IDs; "
-        "do not automatically match duplicate field names. If creation fails, times out, or is cancelled before "
-        "returning a key, the issue may already exist: verify Jira before retrying. "
+        "do not automatically match duplicate field names. create_issue first checks required fields, "
+        "available fields, and allowed option values against fresh metadata. validate_only=true returns "
+        "the exact fields it would send and works even when creation is disabled. "
+        "Success returns id, key, and url (null for the scoped-token gateway). "
+        "Errors starting with 'No issue was created' are safe to fix and retry. If creation is not confirmed, "
+        "times out, or is cancelled before returning a key, the issue may already exist: verify Jira before retrying. "
         "Comments embedded in issue fields may be incomplete: use get_issue_comments and pass next_start_at "
         "back as start_at until it is null. Text is best-effort ADF extraction; inspect truncated and characters, "
         "increase text_limit or request include_raw_adf=true for original rich text. "
@@ -100,7 +106,8 @@ mcp = FastMCP(
         "list_fields(search, start_at, max_results, issue, refresh); "
         "list_project_issue_types(project, start_at, max_results); "
         "list_create_fields(project, issue_type_id, start_at, max_results); "
-        "create_issue(project, issue_type_id, summary, description, labels, additional_fields); "
+        "create_issue(project, issue_type_id, summary, description, labels, priority_id, "
+        "assignee_account_id, parent, additional_fields, validate_only); "
         "get_current_user(); search_users(query, start_at, max_results); "
         "get_issue_transitions(issue); transition_issue(issue, transition_id, fields); "
         "list_issue_link_types(); create_issue_link(link_type_id, inward_issue, outward_issue); "

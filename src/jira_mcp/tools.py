@@ -1,5 +1,6 @@
 """Expose focused Jira reads and opt-in issue creation."""
 
+import re
 from typing import Annotated, Any, Self
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
@@ -7,6 +8,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field, RootModel, StrictBool, ValidationError, model_validator
 
 from jira_mcp.app import get_client, get_field_catalog, mcp
+from jira_mcp.client import JiraClient, JiraHTTPError
 from jira_mcp.fields import INVALID_PAYLOAD, FieldDefinition
 from jira_mcp.text import plain_text_to_adf, render_text
 
@@ -30,13 +32,29 @@ Label = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
 Labels = Annotated[list[Label], Field(max_length=100)]
 CreateFieldId = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$", max_length=255)]
 AdditionalFields = Annotated[dict[CreateFieldId, Any], Field(max_length=100)]
+AccountId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^\S+$")]
 CanonicalIssueKey = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]*-[1-9][0-9]*$", max_length=255)]
 
 DEFAULT_FIELDS = "summary,status,issuetype,priority,assignee,reporter,labels,created,updated,description"
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 CREATE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}
-RESERVED_CREATE_FIELDS = frozenset({"project", "issuetype", "summary", "description", "labels"})
+RESERVED_CREATE_FIELDS = frozenset(
+    {"project", "issuetype", "summary", "description", "labels", "priority", "assignee", "parent"}
+)
+UNLISTED_CREATE_FIELDS = frozenset({"project", "issuetype", "parent"})
+SAFE_FIELD_ID = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,254}")
+CREATE_METADATA_PAGE_LIMIT = 10
+NOT_CREATED = "No issue was created"
 CREATE_UNCERTAIN = "Creation not confirmed; the issue may already exist. Please verify Jira before retrying."
+# Only statuses where Jira refuses before creating anything; any other failure is uncertain.
+CREATE_REJECTED = {
+    400: "check the field values",
+    401: "check the credentials and token scopes",
+    403: "check the Create issues permission",
+    404: "check the project, issue type, and Jira URL",
+    422: "check the project configuration",
+    429: "wait before trying again",
+}
 
 
 class CreatedIssuePayload(BaseModel):
@@ -455,6 +473,85 @@ async def list_create_fields(
     }
 
 
+def id_or_key(value: str) -> dict[str, str]:
+    """Reference a Jira project or issue by numeric ID or by key."""
+    return {"id" if value.isdigit() else "key": value}
+
+
+async def fetch_create_fields(client: JiraClient, project: str, issue_type_id: str) -> list[CreateField]:
+    """Read every create-field metadata page, bounded so a bad total cannot loop forever."""
+    fields: list[CreateField] = []
+    start: int | None = 0
+    for _ in range(CREATE_METADATA_PAGE_LIMIT):
+        data = await client.get(
+            f"issue/createmeta/{project}/issuetypes/{issue_type_id}", params={"startAt": start, "maxResults": 100}
+        )
+        page = validate_payload(CreateFieldPage, data)
+        fields.extend(page.fields)
+        start = next_offset(page.start_at, len(page.fields), page.total)
+        if start is None:
+            return fields
+    msg = "Jira returned too much creation metadata to validate"
+    raise ToolError(msg)
+
+
+def safe_field_id(field: CreateField) -> str:
+    """Name a metadata field by ID only, because names and odd IDs are untrusted text."""
+    field_id = field.field_id or field.key or ""
+    return field_id if SAFE_FIELD_ID.fullmatch(field_id) else "a field with an unusual ID"
+
+
+def option_allowed(item: Any, allowed: list[dict[str, Any]]) -> bool:
+    """Match one option on the first identity Jira would use, ignoring case and type."""
+    if not isinstance(item, dict):
+        return True
+    for identity in ("id", "value", "name"):
+        choices = [str(option[identity]).casefold() for option in allowed if identity in option]
+        if identity in item and choices:
+            return str(item[identity]).casefold() in choices
+    return True
+
+
+def value_allowed(value: Any, allowed: list[Any] | None) -> bool:
+    """Check option values leniently so local validation is never stricter than Jira.
+
+    Skip empty or non-object option lists and free-form values. Cascading selects
+    are checked only at the top level because child options are not listed here.
+    """
+    if not allowed or not all(isinstance(option, dict) for option in allowed):
+        return True
+    return all(option_allowed(item, allowed) for item in (value if isinstance(value, list) else [value]))
+
+
+def create_field_problems(fields: dict[str, Any], metadata: list[CreateField]) -> list[str]:
+    """List missing, unavailable, and disallowed fields using only safe field IDs."""
+    if not metadata:
+        return ["Jira returned no creation fields; check the issue type ID and the Create issues permission"]
+    known = {identity: field for field in metadata for identity in (field.field_id, field.key) if identity}
+    problems = [
+        f"{safe_field_id(field)} is required"
+        for field in metadata
+        if field.required and not field.has_default_value and not {field.field_id, field.key} & fields.keys()
+    ]
+    for field_id, value in fields.items():
+        field = known.get(field_id)
+        # Parent may be settable even when the create screen does not list it.
+        if field is None and field_id not in UNLISTED_CREATE_FIELDS:
+            problems.append(f"{field_id} is not available when creating this issue type")
+        # Project and issue type options still pass: Jira lists the selected one, and keys are not checked.
+        # Autocomplete fields may list only some valid options, so their values are left to Jira.
+        elif field is not None and field.auto_complete_url is None and not value_allowed(value, field.allowed_values):
+            problems.append(f"{field_id} has a value that is not allowed")
+    return problems
+
+
+def create_failure(exc: ToolError) -> ToolError:
+    """Separate statuses where Jira rejected the request from outcomes that are unknown."""
+    if isinstance(exc, JiraHTTPError) and (hint := CREATE_REJECTED.get(exc.status_code)):
+        return ToolError(f"{NOT_CREATED}: Jira rejected the request with HTTP status {exc.status_code}; {hint}.")
+    return ToolError(f"{exc}. {CREATE_UNCERTAIN}")
+
+
 @mcp.tool(annotations=CREATE)
 async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-contained.
     project: Project,
@@ -464,51 +561,75 @@ async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls sel
     *,
     description: Description | None = None,
     labels: Labels | None = None,
+    priority_id: IssueId | None = None,
+    assignee_account_id: AccountId | None = None,
+    parent: Issue | None = None,
     additional_fields: AdditionalFields | None = None,
-) -> dict[str, str]:
-    """Create one Jira issue after an explicit user request, when issue creation is enabled.
+    validate_only: bool = False,
+) -> dict[str, Any]:
+    """Create one Jira issue after an explicit user request, or preview it with validate_only.
 
     Use a project key or numeric ID and an issue type ID from creation metadata.
     Summary is required. Description is plain text, converted to ADF without
     Markdown parsing. Additional system or custom fields retain their original JSON;
     provide ADF for any other rich-text fields. Core fields cannot be overridden.
-    This may trigger notifications or automation. The tool makes one POST and no
-    follow-up request. If the call fails, times out, or is cancelled before returning
-    a key, the issue may already exist. Verify Jira before retrying.
+
+    After local checks, it reads create-field metadata and reports missing required fields,
+    unavailable fields, and disallowed option values before any write. validate_only
+    returns the exact fields that would be sent and never writes, even when creation
+    is disabled. Otherwise this needs JIRA_ENABLE_ISSUE_CREATION=true, may trigger
+    notifications or automation, and makes exactly one POST that is never retried.
+    "No issue was created" errors are safe to fix and retry. If the result says
+    creation is not confirmed, the issue may already exist: verify Jira before retrying.
     """
     # Resolve configuration first: only a configured lifespan records the issue creation setting.
     client = get_client(ctx)
-    if not ctx.lifespan_context["enable_issue_creation"]:
+    enabled = ctx.lifespan_context["enable_issue_creation"]
+    if not enabled and not validate_only:
         msg = "Issue creation is disabled. Ask the user to set JIRA_ENABLE_ISSUE_CREATION=true and restart the server."
         raise ToolError(msg)
     if additional_fields and RESERVED_CREATE_FIELDS.intersection(additional_fields):
-        msg = "additional_fields cannot override project, issuetype, summary, description, or labels."
+        msg = f"additional_fields cannot override {', '.join(sorted(RESERVED_CREATE_FIELDS))}."
         raise ToolError(msg)
 
-    project_ref = {"id": project} if project.isdigit() else {"key": project}
+    optional = {
+        "description": None if description is None else plain_text_to_adf(description),
+        "labels": labels,
+        "priority": None if priority_id is None else {"id": priority_id},
+        "assignee": None if assignee_account_id is None else {"accountId": assignee_account_id},
+        "parent": None if parent is None else id_or_key(parent),
+    }
     fields: dict[str, Any] = {
-        "project": project_ref,
+        "project": id_or_key(project),
         "issuetype": {"id": issue_type_id},
         "summary": summary,
+        **{field_id: value for field_id, value in optional.items() if value is not None},
+        **(additional_fields or {}),
     }
-    if description is not None:
-        fields["description"] = plain_text_to_adf(description)
-    if labels is not None:
-        fields["labels"] = labels
-    if additional_fields is not None:
-        fields.update(additional_fields)
+
+    try:
+        metadata = await fetch_create_fields(client, project, issue_type_id)
+    except ToolError as exc:
+        msg = f"{NOT_CREATED}: {str(exc).rstrip('.')}."
+        raise ToolError(msg) from None
+    if problems := create_field_problems(fields, metadata):
+        msg = f"{NOT_CREATED}: {'; '.join(problems)}."
+        raise ToolError(msg)
+    if validate_only:
+        return {"validate_only": True, "creation_enabled": enabled, "fields": fields}
 
     try:
         data = await client.post("issue", {"fields": fields})
     except ToolError as exc:
-        msg = f"{exc}. {CREATE_UNCERTAIN}"
-        raise ToolError(msg) from None
+        raise create_failure(exc) from None
     try:
         created = CreatedIssuePayload.model_validate(data)
     except ValidationError:
         msg = f"Jira returned an unexpected creation response. {CREATE_UNCERTAIN}"
         raise ToolError(msg) from None
-    return created.model_dump()
+    browse_base = ctx.lifespan_context["browse_base"]
+    url = None if browse_base is None else f"{browse_base}/browse/{created.key}"
+    return {**created.model_dump(), "url": url}
 
 
 @mcp.tool(annotations=READ_ONLY)

@@ -23,6 +23,11 @@ class Settings:
     timeout: float = 30.0
     enable_issue_creation: bool = False
 
+    @property
+    def browse_base(self) -> str | None:
+        """Return the site URL for issue links, or None for the scoped-token gateway."""
+        return None if urlsplit(self.url).hostname == "api.atlassian.com" else self.url
+
     @classmethod
     def from_env(cls) -> Settings:
         """Load credentials and validate the Cloud URL, timeout, and issue creation setting."""
