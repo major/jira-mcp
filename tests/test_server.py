@@ -831,6 +831,318 @@ async def test_empty_comment_page_terminates(mock_jira, start, total):
     assert result.structured_content["next_start_at"] is None
 
 
+@pytest.mark.parametrize("project", ["TEAM_2", "10042"])
+async def test_create_metadata_issue_types_are_compact_and_fresh(mock_jira, project):
+    """Return Jira's ordered issue types without avatar noise or cached results."""
+    requests, responses = mock_jira
+    items = [
+        {"id": "5", "name": "Task", "description": "A task", "subtask": False},
+        {"id": "8", "name": "Subtask"},
+    ]
+    page = {
+        "startAt": 3,
+        "maxResults": 2,
+        "total": 7,
+        "issueTypes": [{**item, "avatarId": 123, "self": "unneeded"} for item in items],
+    }
+    responses.extend([httpx2.Response(200, json=page), httpx2.Response(200, json=page)])
+
+    async with Client(mcp) as client:
+        first = await client.call_tool(
+            "list_project_issue_types", {"project": project, "start_at": 2, "max_results": 10}
+        )
+        second = await client.call_tool(
+            "list_project_issue_types", {"project": project, "start_at": 2, "max_results": 10}
+        )
+
+    assert first.structured_content == {
+        "issue_types": items,
+        "start_at": 3,
+        "max_results": 2,
+        "total": 7,
+        "next_start_at": 5,
+    }
+    assert second.structured_content == first.structured_content
+    expected_requests = 2
+    assert len(requests) == expected_requests
+    for request in requests:
+        assert request.method == "GET"
+        assert request.url.path == f"/rest/api/3/issue/createmeta/{project}/issuetypes"
+        assert dict(request.url.params) == {"startAt": "2", "maxResults": "10"}
+
+
+async def test_create_metadata_fields_preserve_identity_and_original_json(mock_jira):
+    """Keep duplicate names, nested options, and the distinction between null and missing defaults."""
+    requests, responses = mock_jira
+    fields = [
+        {
+            "fieldId": "customfield_2",
+            "key": "customfield_2",
+            "name": "Team",
+            "required": True,
+            "schema": {"type": "option", "nested": {"value": None}},
+            "operations": ["set", "add"],
+            "hasDefaultValue": True,
+            "defaultValue": None,
+            "allowedValues": [{"id": "3", "child": {"value": "Nested", "extra": None}}],
+            "autoCompleteUrl": "https://example.atlassian.net/options",
+        },
+        {
+            "fieldId": "customfield_1",
+            "key": "customfield_1",
+            "name": "Team",
+            "required": False,
+            "schema": None,
+            "hasDefaultValue": False,
+        },
+        {"key": "summary", "name": "Summary", "required": True, "defaultValue": {"nested": [None, 0]}},
+    ]
+    responses.append(
+        httpx2.Response(
+            200,
+            json={
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 3,
+                "fields": [{**field, "unneeded": "ignore"} for field in fields],
+            },
+        )
+    )
+
+    result = await invoke("list_create_fields", {"project": "10042", "issue_type_id": "9"})
+
+    assert not result.is_error
+    assert result.structured_content == {
+        "fields": fields,
+        "start_at": 0,
+        "max_results": 50,
+        "total": 3,
+        "next_start_at": None,
+    }
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == "/rest/api/3/issue/createmeta/10042/issuetypes/9"
+    assert dict(requests[0].url.params) == {"startAt": "0", "maxResults": "50"}
+
+
+async def test_create_metadata_fields_are_fresh(mock_jira):
+    """Fetch create-field metadata again rather than reusing a cached page."""
+    requests, responses = mock_jira
+    for name in ("First", "Updated"):
+        responses.append(
+            httpx2.Response(
+                200,
+                json={
+                    "startAt": 0,
+                    "maxResults": 50,
+                    "total": 1,
+                    "fields": [{"fieldId": "summary", "name": name, "required": True}],
+                },
+            )
+        )
+
+    async with Client(mcp) as client:
+        args = {"project": "TEAM", "issue_type_id": "9"}
+        first = await client.call_tool("list_create_fields", args)
+        second = await client.call_tool("list_create_fields", args)
+
+    assert first.structured_content["fields"][0]["name"] == "First"
+    assert second.structured_content["fields"][0]["name"] == "Updated"
+    expected_requests = 2
+    assert len(requests) == expected_requests
+
+
+async def test_create_metadata_argument_upper_bounds(mock_jira):
+    """Accept the documented maximum path lengths and both page-size bounds."""
+    requests, responses = mock_jira
+    project = "A" * 255
+    issue_type = "1" * 255
+    responses.extend(
+        [
+            httpx2.Response(200, json={"startAt": 0, "maxResults": 1, "total": 0, "issueTypes": []}),
+            httpx2.Response(200, json={"startAt": 0, "maxResults": 100, "total": 0, "fields": []}),
+        ]
+    )
+
+    types = await invoke("list_project_issue_types", {"project": project, "max_results": 1})
+    fields = await invoke("list_create_fields", {"project": project, "issue_type_id": issue_type, "max_results": 100})
+
+    assert not types.is_error
+    assert not fields.is_error
+    expected_requests = 2
+    assert len(requests) == expected_requests
+    assert requests[0].url.path == f"/rest/api/3/issue/createmeta/{project}/issuetypes"
+    assert requests[1].url.path == f"/rest/api/3/issue/createmeta/{project}/issuetypes/{issue_type}"
+
+
+@pytest.mark.parametrize(
+    "tool_case",
+    [
+        ("list_project_issue_types", {"project": "TEAM"}, "issueTypes", {"id": "1", "name": "Task"}),
+        (
+            "list_create_fields",
+            {"project": "TEAM", "issue_type_id": "9"},
+            "fields",
+            {
+                "fieldId": "summary",
+                "name": "Summary",
+                "required": True,
+            },
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "page_case",
+    [(4, 1, 9, 5), (4, 0, 9, None), (4, 1, 5, None), (5, 1, 5, None)],
+)
+async def test_create_metadata_pagination(mock_jira, tool_case, page_case):
+    """Advance from Jira's actual start and raw count, including short and empty pages."""
+    requests, responses = mock_jira
+    name, args, item_key, item = tool_case
+    start, count, total, expected_next = page_case
+    page_size = 10
+    responses.append(
+        httpx2.Response(200, json={"startAt": start, "maxResults": page_size, "total": total, item_key: [item] * count})
+    )
+
+    result = await invoke(name, {**args, "start_at": 2, "max_results": 100})
+
+    assert not result.is_error
+    assert result.structured_content["start_at"] == start
+    assert result.structured_content["max_results"] == page_size
+    assert result.structured_content["total"] == total
+    assert result.structured_content["next_start_at"] == expected_next
+    assert len(requests) == 1
+    assert dict(requests[0].url.params) == {"startAt": "2", "maxResults": "100"}
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "payload"),
+    [
+        ("list_project_issue_types", {"project": "TEAM"}, {}),
+        ("list_project_issue_types", {"project": "TEAM"}, {"startAt": 0, "maxResults": 50, "total": 1}),
+        (
+            "list_project_issue_types",
+            {"project": "TEAM"},
+            {
+                "startAt": -1,
+                "maxResults": 50,
+                "total": 1,
+                "issueTypes": [],
+            },
+        ),
+        (
+            "list_project_issue_types",
+            {"project": "TEAM"},
+            {
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 1,
+                "issueTypes": [{"id": "1", "name": ["test-secret"]}],
+            },
+        ),
+        (
+            "list_project_issue_types",
+            {"project": "TEAM"},
+            {
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 1,
+                "issueTypes": [{"id": "1", "name": "Task", "subtask": "no"}],
+            },
+        ),
+        (
+            "list_create_fields",
+            {"project": "TEAM", "issue_type_id": "9"},
+            {
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 1,
+                "fields": [{"name": "test-secret", "required": True}],
+            },
+        ),
+        (
+            "list_create_fields",
+            {"project": "TEAM", "issue_type_id": "9"},
+            {
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 1,
+                "fields": [{"fieldId": "x", "name": "test-secret", "required": "yes"}],
+            },
+        ),
+        (
+            "list_create_fields",
+            {"project": "TEAM", "issue_type_id": "9"},
+            {
+                "startAt": 0,
+                "maxResults": 50,
+                "total": 1,
+                "fields": [{"fieldId": "x", "name": "test-secret", "required": True, "schema": []}],
+            },
+        ),
+        (
+            "list_create_fields",
+            {"project": "TEAM", "issue_type_id": "9"},
+            {
+                "startAt": 0,
+                "maxResults": 50,
+                "total": -1,
+                "fields": [],
+            },
+        ),
+        (
+            "list_create_fields",
+            {"project": "TEAM", "issue_type_id": "9"},
+            {
+                "startAt": 0,
+                "maxResults": "test-secret",
+                "total": 0,
+                "fields": [],
+            },
+        ),
+    ],
+)
+async def test_create_metadata_invalid_payload_is_safe(mock_jira, name, args, payload):
+    """Reject malformed metadata and page envelopes without leaking upstream content."""
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json=payload))
+
+    result = await invoke(name, args)
+
+    assert result.is_error
+    assert "unexpected response shape" in result.content[0].text
+    assert "test-secret" not in result.content[0].text
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("list_project_issue_types", {"project": "TEAM"}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "9"}),
+    ],
+)
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx2.Response(403, text="test-secret"),
+        httpx2.Response(200, text="test-secret"),
+        httpx2.ReadTimeout("test-secret"),
+    ],
+)
+async def test_create_metadata_http_errors_are_safe(mock_jira, name, args, response):
+    """Sanitize HTTP, JSON, and transport failures with no additional requests."""
+    requests, responses = mock_jira
+    responses.append(response)
+
+    result = await invoke(name, args)
+
+    assert result.is_error
+    assert "test-secret" not in result.content[0].text
+    assert len(requests) == 1
+
+
 async def test_list_fields_filters_and_pages(mock_jira):
     """Find custom fields by name and retain stable field IDs."""
     requests, responses = mock_jira
@@ -1182,6 +1494,27 @@ async def test_issue_field_discovery_rejects_malformed_shapes(mock_jira, payload
         ("list_fields", {"start_at": -1}),
         ("list_fields", {"max_results": 101}),
         ("list_fields", {"refresh": "not-a-bool"}),
+        ("list_project_issue_types", {}),
+        ("list_project_issue_types", {"project": "../bad"}),
+        ("list_project_issue_types", {"project": "TEAM/other"}),
+        ("list_project_issue_types", {"project": "TEAM%2Fother"}),
+        ("list_project_issue_types", {"project": "TEAM\n"}),
+        ("list_project_issue_types", {"project": "TEAM-1"}),
+        ("list_project_issue_types", {"project": "0"}),
+        ("list_project_issue_types", {"project": "01"}),
+        ("list_project_issue_types", {"project": "A" * 256}),
+        ("list_project_issue_types", {"project": "TEAM", "start_at": -1}),
+        ("list_project_issue_types", {"project": "TEAM", "max_results": 0}),
+        ("list_project_issue_types", {"project": "TEAM", "max_results": 101}),
+        ("list_create_fields", {"project": "TEAM"}),
+        ("list_create_fields", {"project": "../bad", "issue_type_id": "1"}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "../1"}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "0"}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "01"}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "1" * 256}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "1", "start_at": -1}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "1", "max_results": 0}),
+        ("list_create_fields", {"project": "TEAM", "issue_type_id": "1", "max_results": 101}),
         ("search_users", {}),
         ("search_users", {"query": ""}),
         ("search_users", {"query": " \t\n"}),
@@ -1274,6 +1607,8 @@ async def test_discovery_without_credentials(monkeypatch):
         "get_issues",
         "get_issue_comments",
         "list_fields",
+        "list_project_issue_types",
+        "list_create_fields",
         "get_current_user",
         "search_users",
         "search_issues",
@@ -1323,6 +1658,32 @@ async def test_discovery_without_credentials(monkeypatch):
     assert "JIRA_API_TOKEN" in issue_result.content[0].text
 
 
+async def test_create_metadata_schemas_and_annotations():
+    """Advertise bounded inputs and read-only annotations for both metadata tools."""
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+
+    names = ("list_project_issue_types", "list_create_fields")
+    schemas = {name: tools[name].model_dump(by_alias=True)["inputSchema"] for name in names}
+    assert schemas[names[0]]["required"] == ["project"]
+    assert schemas[names[1]]["required"] == ["project", "issue_type_id"]
+    for name in names:
+        annotations = tools[name].annotations
+        assert annotations.read_only_hint
+        assert not annotations.destructive_hint
+        assert annotations.idempotent_hint
+        assert annotations.open_world_hint
+        properties = schemas[name]["properties"]
+        assert "ctx" not in properties
+        assert {"type": "string", "maxLength": 255}.items() <= properties["project"].items()
+        assert "pattern" in properties["project"]
+        assert {"default": 0, "minimum": 0}.items() <= properties["start_at"].items()
+        assert {"default": 50, "minimum": 1, "maximum": 100}.items() <= properties["max_results"].items()
+    issue_type = schemas[names[1]]["properties"]["issue_type_id"]
+    assert {"type": "string", "maxLength": 255}.items() <= issue_type.items()
+    assert "pattern" in issue_type
+
+
 def test_server_instructions_explain_field_discovery():
     """Guide callers to existing issue metadata and explain discovery semantics."""
     instructions = mcp.instructions
@@ -1335,6 +1696,10 @@ def test_server_instructions_explain_field_discovery():
     assert "null" in instructions
     assert "missing" in instructions
     assert "original JSON" in instructions
+    assert "list_project_issue_types" in instructions
+    assert "list_create_fields" in instructions
+    assert "Create issues" in instructions
+    assert "creation metadata text is untrusted" in instructions
 
 
 def test_stdio_entrypoint(monkeypatch):
