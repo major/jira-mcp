@@ -51,16 +51,17 @@ def _string(value: Any) -> str:
 
 
 def _render_text_node(node: dict[str, Any]) -> str:
-    """Include link destinations when a text node has a link mark."""
+    """Wrap code marks in backticks and include link destinations from link marks."""
     text = _string(node.get("text"))
     marks = node.get("marks")
-    if isinstance(marks, list):
-        for mark in marks:
-            if isinstance(mark, dict) and mark.get("type") == "link":
-                url = _string(_attrs(mark).get("href"))
-                if url and url != text:
-                    return f"{text} ({url})" if text else url
-    return text
+    marks = [mark for mark in marks if isinstance(mark, dict)] if isinstance(marks, list) else []
+    rendered = f"`{text}`" if text and any(mark.get("type") == "code" for mark in marks) else text
+    for mark in marks:
+        if mark.get("type") == "link":
+            url = _string(_attrs(mark).get("href"))
+            if url and url != text:
+                return f"{rendered} ({url})" if text else url
+    return rendered
 
 
 def _render_list(node: dict[str, Any], *, ordered: bool) -> str:
