@@ -1,4 +1,4 @@
-"""A Jira Cloud MCP server designed for concise tool responses ☁️."""
+"""Jira Cloud MCP server with concise reads, writes, and opt-in issue creation ☁️."""
 
 from jira_mcp import tools as _tools  # noqa: F401 - Import registers the MCP tools.
 from jira_mcp import workflows as _workflows  # noqa: F401 - Import registers the MCP tools.

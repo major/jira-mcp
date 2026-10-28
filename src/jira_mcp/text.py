@@ -1,6 +1,19 @@
-"""Render Jira text and Atlassian Document Format as readable text."""
+"""Convert plain text to ADF and render Jira content as readable text."""
 
 from typing import Any
+
+
+def plain_text_to_adf(text: str) -> dict[str, Any]:
+    """Convert plain text to minimal ADF paragraphs, preserving normalized line breaks."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    paragraphs: list[dict[str, Any]] = []
+    for line in normalized.split("\n"):
+        paragraph: dict[str, Any] = {"type": "paragraph"}
+        # ADF text nodes must not be empty, so blank lines stay paragraphs without content.
+        if line:
+            paragraph["content"] = [{"type": "text", "text": line}]
+        paragraphs.append(paragraph)
+    return {"type": "doc", "version": 1, "content": paragraphs}
 
 
 def render_text(body: Any, *, limit: int, include_raw: bool) -> dict[str, Any]:
