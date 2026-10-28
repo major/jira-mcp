@@ -43,11 +43,13 @@ See Atlassian's [API token guidance](https://support.atlassian.com/atlassian-acc
 for token creation, scopes, and Cloud ID lookup. OAuth flows are not implemented.
 Issue creation also requires the Jira **Browse projects** and **Create issues**
 project permissions. For a scoped API token, grant the write access required for
-issue creation as described in Atlassian's API token guidance.
+issue creation and the read access for create metadata, as described in
+Atlassian's API token guidance.
 
 To opt in to creation, set `JIRA_ENABLE_ISSUE_CREATION=true` in the server's environment
 and restart the client. The default `false` disables only `create_issue`; transition
-and link tools are unaffected. Invalid values prevent tool calls until corrected.
+and link tools are unaffected. Previews with `validate_only` still work because they
+never write. Invalid values prevent tool calls until corrected.
 Creation can trigger Jira notifications and automation.
 Only create an issue when the user explicitly requests it.
 
@@ -60,7 +62,8 @@ Use a short expiration with regular rotation or revocation.
 Missing configuration does not prevent tool discovery. Tool calls explain which
 variables are missing. Upstream error bodies and transport exception details are
 not returned to the LLM. HTTP failures include the status, such as 401, 403, 404,
-or 429; there are no automatic retries or hidden page-fetch loops.
+or 429; there are no automatic retries or hidden page-fetch loops, except that
+`create_issue` reads up to 10 pages of create metadata before it writes.
 
 Merge the relevant server configuration below into your existing configuration,
 preserving unrelated settings. All examples use the default stdio transport.
@@ -179,7 +182,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 
 | Tool | Purpose |
 | --- | --- |
-| `create_issue` | Create one issue when creation is enabled and the user requests it. **Writes.** |
+| `create_issue` | Validate and create one issue, or preview it with `validate_only`. **Writes.** |
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
 | `get_issue` | Read ticket fields, description, and field metadata. |
 | `get_issue_comments` | Read one oldest-first page of ticket comments. |
@@ -201,7 +204,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 
 | Tool | Defaults |
 | --- | --- |
-| `create_issue` | Required `project`, `issue_type_id`, and `summary`; issue creation disabled by default |
+| `create_issue` | Required `project`, `issue_type_id`, and `summary`; creation disabled by default, `validate_only` false |
 | `get_current_user` | No arguments |
 | `get_issue` | Compact system fields, 12,000 description characters |
 | `get_issue_comments` | 20 comments, 4,000 characters per body |
@@ -528,7 +531,11 @@ Choose an issue type ID from `list_project_issue_types`, and inspect
   "summary": "Investigate the problem",
   "description": "First line\nSecond line",
   "labels": ["triage"],
-  "additional_fields": {"components": [{"id": "101"}]}
+  "priority_id": "3",
+  "assignee_account_id": "712020:example",
+  "parent": "TEAM-1",
+  "additional_fields": {"components": [{"id": "101"}]},
+  "validate_only": true
 }
 ```
 
@@ -540,11 +547,17 @@ These are server input bounds; Jira may impose lower limits on field values.
 Optional `labels` accepts up to 100 strings, each 1 to 255 characters without
 whitespace. An omitted list differs from an empty list.
 
+Optional `priority_id` takes a priority ID from the `priority` allowed values.
+Optional `assignee_account_id` takes an account ID from `search_users`; the server
+cannot check whether that user is assignable. Optional `parent` takes an issue key
+or numeric ID, for example the Epic of a story or the parent of a sub-task.
+
 `additional_fields` accepts up to 100 system or custom field IDs and their
 original JSON values, including `null`, objects, and arrays. Use `fieldId` values
 returned by creation metadata, never `*all` or names. `project`, `issuetype`,
-`summary`, `description`, and `labels` are reserved, even when an optional value
-is omitted. Other rich-text fields, such as `environment`, require caller-supplied
+`summary`, `description`, `labels`, `priority`, `assignee`, and `parent` are
+reserved, even when an optional value is omitted. Use the matching arguments
+instead. Other rich-text fields, such as `environment`, require caller-supplied
 ADF and are not converted automatically. Jira determines which fields are
 available or required for the selected issue type.
 
@@ -554,14 +567,36 @@ example, pass `"additional_fields": {"customfield_97531": "Epic title"}` with
 `"summary": "Epic title"`. That ID is only an example. If no Epic Name field is
 available, use the summary alone, along with any other required fields. Field
 names can be duplicated: do not automatically choose a field by name. The server
-does not hard-code an Epic type or field and does not fetch metadata automatically.
+does not hard-code an Epic type or field.
 
-Creation makes one POST and returns the new issue's canonical `id` and `key`.
-It does not automatically retry, reconcile, or fetch the issue afterward. Any HTTP
-failure, network error, invalid JSON, or malformed success response can leave the
-outcome uncertain: **the issue may already exist, so verify Jira before retrying**.
-The same applies if a call times out or is cancelled before returning a key,
-even when no warning reaches the client. Do not retry automatically.
+Calls that pass local checks then read up to 10 pages of create-field metadata
+for the project and issue type. Before any write, the tool reports in one error:
+
+- required fields without a default that are missing
+- supplied fields that the issue type does not offer (`parent` is allowed anyway)
+- option values that do not match the field's allowed values
+
+Option checks match `id`, `value`, or `name` without regard to case or type, check
+only the top level of cascading selects, and skip free-form values and fields with
+an autocomplete URL. Jira still
+makes the final decision. Errors name fields by ID only, never by name or value.
+
+With `"validate_only": true`, the tool stops after these checks and returns
+`validate_only`, `creation_enabled`, and the exact `fields` it would send. It never
+writes, so it works even when creation is disabled.
+
+Otherwise, creation makes exactly one POST and returns the new issue's canonical
+`id`, `key`, and browse `url`. The `url` is `null` with the scoped-token gateway,
+because the site URL is unknown. The tool never retries, reconciles, or fetches the
+issue afterward. Jira-related errors fall into two groups:
+
+| Error starts with | Meaning | What to do |
+| --- | --- | --- |
+| `No issue was created:` | Validation failed, metadata could not be read, or Jira rejected the POST with HTTP 400, 401, 403, 404, 422, or 429 | Fix the cause, then retry |
+| `... Creation not confirmed` | Network error, timeout, any other HTTP status, invalid JSON, or a malformed success response | **The issue may already exist, so verify Jira before retrying** |
+
+The second case also applies if a call times out or is cancelled before returning
+a key, even when no warning reaches the client. Do not retry automatically.
 Local validation, missing configuration, or a disabled issue creation setting make no
 creation request. Upstream errors remain sanitized.
 

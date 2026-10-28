@@ -1784,6 +1784,13 @@ async def test_create_invalid_issue_creation_configuration_does_not_request(mock
     assert requests == []
 
 
+def create_metadata(*field_ids, **overrides):
+    """Return one create-field metadata page listing summary and each supplied field ID."""
+    fields = [{"fieldId": field_id, "name": "Name", "required": False} for field_id in ("summary", *field_ids)]
+    fields += [{"fieldId": field_id, "name": "Name", **value} for field_id, value in overrides.items()]
+    return httpx2.Response(200, json={"startAt": 0, "maxResults": 100, "total": len(fields), "fields": fields})
+
+
 @pytest.mark.parametrize(
     ("project", "options", "expected_fields"),
     [
@@ -1791,17 +1798,23 @@ async def test_create_invalid_issue_creation_configuration_does_not_request(mock
         ("10042", {"labels": []}, {"project": {"id": "10042"}, "labels": []}),
         (
             "TEAM_2",
-            {"labels": ["first", "café"]},
-            {"project": {"key": "TEAM_2"}, "labels": ["first", "café"]},
+            {"labels": ["first", "café"], "priority_id": "3", "assignee_account_id": "712020:abc", "parent": "TEAM-1"},
+            {
+                "project": {"key": "TEAM_2"},
+                "labels": ["first", "café"],
+                "priority": {"id": "3"},
+                "assignee": {"accountId": "712020:abc"},
+                "parent": {"key": "TEAM-1"},
+            },
         ),
         (
             "TEAM",
             {
                 "description": "hello\r\n\n🙂",
+                "parent": "10001",
                 "additional_fields": {
                     "customfield_97531": "Epic title",
                     "components": [{"id": "5"}],
-                    "parent": {"key": "TEAM-1"},
                     "customfield_20": None,
                     "environment": {"type": "doc", "version": 1, "content": [{"type": "paragraph"}]},
                 },
@@ -1817,9 +1830,9 @@ async def test_create_invalid_issue_creation_configuration_does_not_request(mock
                         {"type": "paragraph", "content": [{"type": "text", "text": "🙂"}]},
                     ],
                 },
+                "parent": {"id": "10001"},
                 "customfield_97531": "Epic title",
                 "components": [{"id": "5"}],
-                "parent": {"key": "TEAM-1"},
                 "customfield_20": None,
                 "environment": {"type": "doc", "version": 1, "content": [{"type": "paragraph"}]},
             },
@@ -1835,19 +1848,28 @@ async def test_create_invalid_issue_creation_configuration_does_not_request(mock
     ],
 )
 async def test_create_issue_payload_and_single_post(mock_jira, monkeypatch, project, options, expected_fields):
-    """Preserve optional fields and send exactly one creation request without a follow-up GET."""
+    """Validate against fresh metadata, then send exactly one creation request and return the issue URL."""
     requests, responses = mock_jira
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "TRUE")
-    responses.append(httpx2.Response(201, json={"id": "123", "key": "TEAM-8", "self": "not-returned"}))
+    supplied = [field_id for field_id in expected_fields if field_id not in ("project", "parent")]
+    responses.extend(
+        [create_metadata(*supplied), httpx2.Response(201, json={"id": "123", "key": "TEAM-8", "self": "not-returned"})]
+    )
 
     result = await invoke("create_issue", {"project": project, "issue_type_id": "42", "summary": "Title", **options})
 
     assert not result.is_error
-    assert result.structured_content == {"id": "123", "key": "TEAM-8"}
-    assert len(requests) == 1
-    assert requests[0].method == "POST"
-    assert requests[0].url.path == "/rest/api/3/issue"
-    assert json.loads(requests[0].content) == {
+    assert result.structured_content == {
+        "id": "123",
+        "key": "TEAM-8",
+        "url": "https://example.atlassian.net/browse/TEAM-8",
+    }
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", f"/rest/api/3/issue/createmeta/{project}/issuetypes/42"),
+        ("POST", "/rest/api/3/issue"),
+    ]
+    assert requests[0].url.params["maxResults"] == "100"
+    assert json.loads(requests[1].content) == {
         "fields": {
             "issuetype": {"id": "42"},
             "summary": "Title",
@@ -1856,18 +1878,144 @@ async def test_create_issue_payload_and_single_post(mock_jira, monkeypatch, proj
     }
 
 
+async def test_create_through_gateway_returns_no_browse_url(mock_jira, monkeypatch):
+    """Avoid inventing a browse link when only the scoped-token gateway URL is known."""
+    _, responses = mock_jira
+    monkeypatch.setenv("JIRA_URL", "https://api.atlassian.com/ex/jira/cloud-id")
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
+    responses.extend([create_metadata(), httpx2.Response(201, json={"id": "123", "key": "TEAM-8"})])
+
+    result = await invoke("create_issue", {"project": "TEAM", "issue_type_id": "9", "summary": "Title"})
+
+    assert result.structured_content == {"id": "123", "key": "TEAM-8", "url": None}
+
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+async def test_create_validate_only_previews_without_writing(mock_jira, monkeypatch, enabled):
+    """Return the exact payload after reading metadata, with no POST even when creation is enabled."""
+    requests, responses = mock_jira
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", enabled)
+    responses.append(create_metadata("labels", "priority", reporter={"required": True, "hasDefaultValue": True}))
+
+    result = await invoke(
+        "create_issue",
+        {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "labels": ["a"], "validate_only": True},
+    )
+
+    assert not result.is_error
+    assert result.structured_content == {
+        "validate_only": True,
+        "creation_enabled": enabled == "true",
+        "fields": {"project": {"key": "TEAM"}, "issuetype": {"id": "9"}, "summary": "Title", "labels": ["a"]},
+    }
+    assert [request.method for request in requests] == ["GET"]
+
+
+@pytest.mark.parametrize(
+    ("allowed", "value"),
+    [
+        ([{"id": 1, "value": "One"}], {"id": "1"}),
+        ([{"id": "1", "value": "High"}], {"value": "high", "child": {"value": "not listed"}}),
+        ([{"id": "1", "name": "Web"}], [{"value": "anything"}, {"name": "web"}]),
+        ([], {"id": "unlisted"}),
+        (["set"], {"id": "unlisted"}),
+        ([{"id": "1"}], "free-form"),
+    ],
+)
+@pytest.mark.parametrize("auto_complete", [{}, {"autoCompleteUrl": "https://example.atlassian.net/x"}])
+async def test_create_option_checks_are_lenient(mock_jira, allowed, value, auto_complete):
+    """Never reject option shapes that Jira itself might accept."""
+    _, responses = mock_jira
+    responses.append(create_metadata(customfield_1={"required": False, "allowedValues": allowed, **auto_complete}))
+
+    result = await invoke(
+        "create_issue",
+        {
+            "project": "TEAM",
+            "issue_type_id": "9",
+            "summary": "Title",
+            "additional_fields": {"customfield_1": value},
+            "validate_only": True,
+        },
+    )
+
+    assert not result.is_error
+
+
+@pytest.mark.parametrize(
+    ("metadata", "options", "reason"),
+    [
+        (
+            [create_metadata(customfield_1={"required": True}, **{"bad id": {"required": True}})],
+            {},
+            "customfield_1 is required; a field with an unusual ID is required",
+        ),
+        ([create_metadata()], {"priority_id": "3"}, "priority is not available"),
+        (
+            [create_metadata(priority={"required": False, "allowedValues": [{"id": "1", "name": "test-secret"}]})],
+            {"priority_id": "3", "validate_only": True},
+            "priority has a value that is not allowed",
+        ),
+        (
+            [httpx2.Response(200, json={"startAt": 0, "maxResults": 100, "total": 0, "fields": []})],
+            {},
+            "Create issues permission",
+        ),
+        (
+            [
+                httpx2.Response(
+                    200,
+                    json={
+                        "startAt": 0,
+                        "maxResults": 1,
+                        "total": 99,
+                        "fields": [{"fieldId": "summary", "name": "Summary", "required": True}],
+                    },
+                )
+            ]
+            * 10,
+            {},
+            "too much creation metadata",
+        ),
+        ([httpx2.Response(403, text="test-secret")], {}, "HTTP status 403"),
+        ([httpx2.Response(200, json={"private": "test-secret"})], {}, "unexpected response shape. Check"),
+    ],
+)
+async def test_create_rejects_before_post(mock_jira, monkeypatch, metadata, options, reason):
+    """Report metadata problems with safe field IDs and never send a creation request."""
+    requests, responses = mock_jira
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
+    responses.extend(metadata)
+
+    result = await invoke(
+        "create_issue",
+        {"project": "TEAM", "issue_type_id": "9", "summary": "Title", **options},
+    )
+
+    assert result.is_error
+    message = result.content[0].text
+    assert message.startswith("No issue was created: ")
+    assert reason in message
+    assert "test-secret" not in message
+    assert {request.method for request in requests} == {"GET"}
+    assert len(requests) == len(metadata)
+
+
 @pytest.mark.parametrize("has_epic_name", [True, False])
 async def test_create_epic_with_discovered_fields(mock_jira, monkeypatch, has_epic_name):
     """Use a discovered Epic Name ID only when supplied, with no implicit field matching."""
     requests, responses = mock_jira
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
-    fields = [{"fieldId": "customfield_97531", "name": "Epic Name", "required": False}] if has_epic_name else []
+    fields = [{"fieldId": "summary", "name": "Summary", "required": True}]
+    fields += [{"fieldId": "customfield_97531", "name": "Epic Name", "required": False}] if has_epic_name else []
+    metadata = httpx2.Response(200, json={"startAt": 0, "maxResults": 50, "total": len(fields), "fields": fields})
     responses.extend(
         [
             httpx2.Response(
                 200, json={"startAt": 0, "maxResults": 50, "total": 1, "issueTypes": [{"id": "42", "name": "Epic"}]}
             ),
-            httpx2.Response(200, json={"startAt": 0, "maxResults": 50, "total": len(fields), "fields": fields}),
+            metadata,
+            metadata,
             httpx2.Response(201, json={"id": "123", "key": "TEAM-8"}),
         ]
     )
@@ -1876,14 +2024,14 @@ async def test_create_epic_with_discovered_fields(mock_jira, monkeypatch, has_ep
         types = await client.call_tool("list_project_issue_types", {"project": "TEAM"})
         issue_type_id = types.structured_content["issue_types"][0]["id"]
         metadata = await client.call_tool("list_create_fields", {"project": "TEAM", "issue_type_id": issue_type_id})
-        supplied = {metadata.structured_content["fields"][0]["fieldId"]: "Epic title"} if has_epic_name else {}
+        supplied = {metadata.structured_content["fields"][-1]["fieldId"]: "Epic title"} if has_epic_name else {}
         result = await client.call_tool(
             "create_issue",
             {"project": "TEAM", "issue_type_id": issue_type_id, "summary": "Epic title", "additional_fields": supplied},
         )
 
     assert not result.is_error
-    assert [request.method for request in requests] == ["GET", "GET", "POST"]
+    assert [request.method for request in requests] == ["GET", "GET", "GET", "POST"]
     assert json.loads(requests[-1].content)["fields"] == {
         "project": {"key": "TEAM"},
         "issuetype": {"id": "42"},
@@ -1892,9 +2040,10 @@ async def test_create_epic_with_discovered_fields(mock_jira, monkeypatch, has_ep
     }
 
 
-@pytest.mark.parametrize("reserved", ["project", "issuetype", "summary", "description", "labels"])
-@pytest.mark.parametrize("optionals", [{}, {"description": "details", "labels": []}])
-async def test_create_rejects_reserved_fields_before_http(mock_jira, monkeypatch, reserved, optionals):
+@pytest.mark.parametrize(
+    "reserved", ["project", "issuetype", "summary", "description", "labels", "priority", "assignee", "parent"]
+)
+async def test_create_rejects_reserved_fields_before_http(mock_jira, monkeypatch, reserved):
     """Reject every core field collision, including when optional arguments are omitted."""
     requests, _ = mock_jira
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
@@ -1906,7 +2055,6 @@ async def test_create_rejects_reserved_fields_before_http(mock_jira, monkeypatch
             "issue_type_id": "9",
             "summary": "Title",
             "additional_fields": {reserved: None},
-            **optionals,
         },
     )
 
@@ -1934,6 +2082,10 @@ async def test_create_rejects_reserved_fields_before_http(mock_jira, monkeypatch
         {"labels": ["bad\tlabel"]},
         {"labels": ["x" * 256]},
         {"labels": ["x"] * 101},
+        {"priority_id": "High"},
+        {"assignee_account_id": "bad id"},
+        {"assignee_account_id": "x" * 129},
+        {"parent": "../bad"},
         {"additional_fields": {"*all": 1}},
         {"additional_fields": {"bad.field": 1}},
         {"additional_fields": {"x" * 256: 1}},
@@ -1955,25 +2107,33 @@ async def test_create_accepts_upper_bounds(mock_jira, monkeypatch):
     """Accept the maximum documented lengths and number of labels and additional fields."""
     requests, responses = mock_jira
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
-    responses.append(httpx2.Response(201, json={"id": "1", "key": "TEAM-1"}))
     options = {
         "project": "A" * 255,
         "issue_type_id": "1" * 255,
         "summary": "s" * 255,
         "description": "d" * 100_000,
         "labels": ["l" * 255] * 100,
+        "assignee_account_id": "a" * 128,
         "additional_fields": {f"field_{i}": [i, None] for i in range(100)},
     }
+    fields = create_metadata("description", "labels", "assignee", *options["additional_fields"]).json()["fields"]
+    pages = [
+        httpx2.Response(200, json={"startAt": start, "maxResults": 100, "total": len(fields), "fields": page})
+        for start, page in ((0, fields[:100]), (100, fields[100:]))
+    ]
+    responses.extend([*pages, httpx2.Response(201, json={"id": "1", "key": "TEAM-1"})])
 
     result = await invoke("create_issue", options)
 
     assert not result.is_error
-    sent = json.loads(requests[0].content)["fields"]
+    sent = json.loads(requests[-1].content)["fields"]
     assert sent["summary"] == options["summary"]
     assert sent["description"]["content"][0]["content"][0]["text"] == options["description"]
     assert sent["labels"] == options["labels"]
+    assert sent["assignee"] == {"accountId": options["assignee_account_id"]}
     assert all(sent[key] == value for key, value in options["additional_fields"].items())
-    assert len(requests) == 1
+    assert [request.method for request in requests] == ["GET", "GET", "POST"]
+    assert requests[1].url.params["startAt"] == "100"
 
 
 @pytest.mark.parametrize(
@@ -1982,7 +2142,7 @@ async def test_create_accepts_upper_bounds(mock_jira, monkeypatch):
         (httpx2.ReadTimeout("test-secret"), "network or timeout"),
         (httpx2.ConnectError("test-secret"), "network or timeout"),
         (httpx2.Response(500, text="test-secret"), "HTTP status 500"),
-        (httpx2.Response(400, text="test-secret"), "HTTP status 400"),
+        (httpx2.Response(409, text="test-secret"), "HTTP status 409"),
         (httpx2.Response(201, text="test-secret"), "invalid JSON"),
         (
             httpx2.Response(201, json={"id": "0", "key": "TEAM-1", "private": "test-secret"}),
@@ -1997,7 +2157,7 @@ async def test_create_uncertain_errors_are_safe_and_not_retried(mock_jira, monke
     """Warn about possible creation after a failed request without exposing upstream details."""
     requests, responses = mock_jira
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
-    responses.append(response)
+    responses.extend([create_metadata(), response])
 
     result = await invoke("create_issue", {"project": "TEAM", "issue_type_id": "9", "summary": "Title"})
 
@@ -2008,7 +2168,35 @@ async def test_create_uncertain_errors_are_safe_and_not_retried(mock_jira, monke
     assert "may already exist" in message
     assert "verify Jira before retrying" in message
     assert "test-secret" not in message
-    assert len(requests) == 1
+    assert [request.method for request in requests] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize(
+    ("status", "hint"),
+    [
+        (400, "field values"),
+        (401, "credentials"),
+        (403, "Create issues permission"),
+        (404, "Jira URL"),
+        (422, "project configuration"),
+        (429, "wait"),
+    ],
+)
+async def test_create_rejections_are_distinct_from_uncertain_outcomes(mock_jira, monkeypatch, status, hint):
+    """Report statuses where Jira refused the request as not created, without retrying."""
+    requests, responses = mock_jira
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
+    responses.extend([create_metadata(), httpx2.Response(status, text="test-secret")])
+
+    result = await invoke("create_issue", {"project": "TEAM", "issue_type_id": "9", "summary": "Title"})
+
+    assert result.is_error
+    message = result.content[0].text
+    assert message.startswith(f"No issue was created: Jira rejected the request with HTTP status {status}")
+    assert hint in message
+    assert "may already exist" not in message
+    assert "test-secret" not in message
+    assert [request.method for request in requests] == ["GET", "POST"]
 
 
 def test_server_instructions_explain_field_discovery():

@@ -8,6 +8,15 @@ from fastmcp.exceptions import ToolError
 lazy from jira_mcp.config import Settings
 
 
+class JiraHTTPError(ToolError):
+    """Report an unsuccessful Jira status code so writes can classify the outcome."""
+
+    def __init__(self, status_code: int) -> None:
+        """Keep the status code and a safe message without the upstream body."""
+        super().__init__(f"Jira request failed with HTTP status {status_code}")
+        self.status_code = status_code
+
+
 class JiraClient:
     """Reuse a single authenticated HTTP client for Jira API requests."""
 
@@ -49,8 +58,7 @@ class JiraClient:
             raise ToolError(msg) from None
 
         if not response.is_success:
-            msg = f"Jira request failed with HTTP status {response.status_code}"
-            raise ToolError(msg)
+            raise JiraHTTPError(response.status_code)
         if not expect_json:
             return None
         try:

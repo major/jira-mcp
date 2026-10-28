@@ -9,7 +9,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from jira_mcp.app import get_client, mcp
-from jira_mcp.tools import READ_ONLY, Issue, IssueId, validate_payload
+from jira_mcp.tools import READ_ONLY, Issue, IssueId, id_or_key, validate_payload
 
 WRITE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}
 WRITE_OUTCOME_UNKNOWN = "The write outcome may be unknown; inspect the issue or links before retrying."
@@ -141,8 +141,8 @@ async def create_issue_link(
     """
     body = {
         "type": {"id": link_type_id},
-        "inwardIssue": {"id" if inward_issue.isdigit() else "key": inward_issue},
-        "outwardIssue": {"id" if outward_issue.isdigit() else "key": outward_issue},
+        "inwardIssue": id_or_key(inward_issue),
+        "outwardIssue": id_or_key(outward_issue),
     }
     client = get_client(ctx)
     try:
