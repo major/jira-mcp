@@ -26,9 +26,9 @@ class JiraClient:
         """Get and decode a Jira API response, hiding remote error details."""
         return await self._request("GET", path, params=params)
 
-    async def post(self, path: str, body: dict[str, Any]) -> Any:
-        """Read Jira data with a JSON body instead of a length-limited URL."""
-        return await self._request("POST", path, json=body)
+    async def post(self, path: str, body: dict[str, Any], *, expect_json: bool = True) -> Any:
+        """Send JSON, explicitly opting out of decoding for bodyless write responses."""
+        return await self._request("POST", path, json=body, expect_json=expect_json)
 
     async def _request(
         self,
@@ -37,6 +37,7 @@ class JiraClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        expect_json: bool = True,
     ) -> Any:
         """Decode an API response without exposing upstream or transport error details."""
         try:
@@ -50,6 +51,8 @@ class JiraClient:
         if not response.is_success:
             msg = f"Jira request failed with HTTP status {response.status_code}"
             raise ToolError(msg)
+        if not expect_json:
+            return None
         try:
             return response.json()
         except ValueError:
