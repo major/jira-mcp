@@ -1,0 +1,108 @@
+"""Render Jira text and Atlassian Document Format as readable text."""
+
+from typing import Any
+
+
+def render_text(body: Any, *, limit: int, include_raw: bool) -> dict[str, Any]:
+    """Render and truncate text while reporting the full character count."""
+    if body is None:
+        text = ""
+    elif isinstance(body, str):
+        text = body
+    else:
+        text = _render_node(body)
+
+    length = len(text)
+    limit = max(limit, 0)
+    result: dict[str, Any] = {"text": text[:limit], "characters": length, "truncated": length > limit}
+    if include_raw:
+        result["adf"] = body
+    return result
+
+
+def _content(node: dict[str, Any]) -> list[Any]:
+    """Return a node's children when they have the expected shape."""
+    content = node.get("content")
+    return content if isinstance(content, list) else []
+
+
+def _attrs(node: dict[str, Any]) -> dict[str, Any]:
+    """Return a node's attributes when they have the expected shape."""
+    attrs = node.get("attrs")
+    return attrs if isinstance(attrs, dict) else {}
+
+
+def _string(value: Any) -> str:
+    """Return a string value or an empty string for malformed data."""
+    return value if isinstance(value, str) else ""
+
+
+def _render_text_node(node: dict[str, Any]) -> str:
+    """Include link destinations when a text node has a link mark."""
+    text = _string(node.get("text"))
+    marks = node.get("marks")
+    if isinstance(marks, list):
+        for mark in marks:
+            if isinstance(mark, dict) and mark.get("type") == "link":
+                url = _string(_attrs(mark).get("href"))
+                if url and url != text:
+                    return f"{text} ({url})" if text else url
+    return text
+
+
+def _render_list(node: dict[str, Any], *, ordered: bool) -> str:
+    """Render list items with visible markers and indented continuation lines."""
+    start = _attrs(node).get("order", 1)
+    if not isinstance(start, int) or isinstance(start, bool):
+        start = 1
+    lines = []
+    for index, item in enumerate(_content(node), start=start):
+        marker = f"{index}. " if ordered else "- "
+        text = _render_node(item)
+        lines.append(marker + text.replace("\n", "\n" + " " * len(marker)))
+    return "\n".join(lines)
+
+
+def _render_inline(node: dict[str, Any]) -> str | None:
+    """Render recognized inline nodes, or return None for other types."""
+    kind = node.get("type")
+    attrs = _attrs(node)
+    if kind == "text":
+        return _render_text_node(node)
+    if kind == "hardBreak":
+        return "\n"
+    if kind == "mention":
+        fallback, placeholder = attrs.get("id"), "[mention]"
+    elif kind == "emoji":
+        fallback, placeholder = attrs.get("shortName"), "[emoji]"
+    elif kind in ("inlineCard", "blockCard", "embedCard"):
+        return _string(attrs.get("url")) or "[card]"
+    elif kind in ("media", "mediaInline"):
+        return "[media]"
+    else:
+        return None
+    return _string(attrs.get("text")) or _string(fallback) or placeholder
+
+
+def _render_node(node: Any) -> str:
+    """Render common ADF nodes and leave placeholders for unsupported nodes."""
+    if not isinstance(node, dict):
+        return "[unknown]"
+    inline = _render_inline(node)
+    if inline is not None:
+        return inline
+    kind = node.get("type")
+    children = _content(node)
+    if kind in ("mediaSingle", "mediaGroup"):
+        return "\n".join(_render_node(child) for child in children) or "[media]"
+    if kind in ("bulletList", "orderedList"):
+        return _render_list(node, ordered=kind == "orderedList")
+    if kind == "tableRow":
+        separator = "\t"
+    elif kind in ("paragraph", "heading", "codeBlock"):
+        separator = ""
+    elif kind in ("doc", "blockquote", "panel", "listItem", "table", "tableCell", "tableHeader", "expand"):
+        separator = "\n"
+    else:
+        return "---" if kind == "rule" else "[unknown]"
+    return separator.join(_render_node(child) for child in children)
