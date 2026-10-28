@@ -113,6 +113,15 @@ def test_readable_adf(body, expected):
             "https://example.com",
         ),
         ({"type": "text", "text": 42}, ""),
+        ({"type": "text", "text": "uv sync", "marks": [{"type": "code"}, {"type": "strong"}]}, "`uv sync`"),
+        (
+            {
+                "type": "text",
+                "text": "make check",
+                "marks": [{"type": "code"}, {"type": "link", "attrs": {"href": "https://example.com"}}],
+            },
+            "`make check` (https://example.com)",
+        ),
         (
             {
                 "type": "orderedList",
