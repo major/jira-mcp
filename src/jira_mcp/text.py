@@ -77,6 +77,22 @@ def _render_list(node: dict[str, Any], *, ordered: bool) -> str:
     return "\n".join(lines)
 
 
+def _render_task_list(node: dict[str, Any]) -> str:
+    """Render task items as checklist lines and indent nested task lists.
+
+    ADF nests a task list as a sibling that follows its parent task item, not as
+    a child of that item, so nesting is handled at the list level.
+    """
+    lines = []
+    for child in _content(node):
+        if isinstance(child, dict) and child.get("type") == "taskList":
+            lines.append("  " + _render_task_list(child).replace("\n", "\n  "))
+            continue
+        marker = "- [x] " if isinstance(child, dict) and _attrs(child).get("state") == "DONE" else "- [ ] "
+        lines.append(marker + _render_node(child).replace("\n", "\n" + " " * len(marker)))
+    return "\n".join(lines)
+
+
 def _render_inline(node: dict[str, Any]) -> str | None:
     """Render recognized inline nodes, or return None for other types."""
     kind = node.get("type")
@@ -109,13 +125,23 @@ def _render_node(node: Any) -> str:
     children = _content(node)
     if kind in ("mediaSingle", "mediaGroup"):
         return "\n".join(_render_node(child) for child in children) or "[media]"
-    if kind in ("bulletList", "orderedList"):
-        return _render_list(node, ordered=kind == "orderedList")
+    if kind in ("bulletList", "orderedList", "taskList"):
+        return _render_task_list(node) if kind == "taskList" else _render_list(node, ordered=kind == "orderedList")
     if kind == "tableRow":
         separator = "\t"
-    elif kind in ("paragraph", "heading", "codeBlock"):
+    elif kind in ("paragraph", "heading", "codeBlock", "taskItem"):
         separator = ""
-    elif kind in ("doc", "blockquote", "panel", "listItem", "table", "tableCell", "tableHeader", "expand"):
+    elif kind in (
+        "doc",
+        "blockquote",
+        "panel",
+        "listItem",
+        "blockTaskItem",
+        "table",
+        "tableCell",
+        "tableHeader",
+        "expand",
+    ):
         separator = "\n"
     else:
         return "---" if kind == "rule" else "[unknown]"
