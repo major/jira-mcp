@@ -9,6 +9,10 @@ INSTRUCTIONS = (
     "Use transition_issue(issue, transition_id, fields) with a discovered transition ID, not a status ID. "
     "Supply resolution in fields, for example {'resolution': {'id': '10000'}}, only when the workflow allows it. "
     "Fields preserve original JSON, including explicit nulls. "
+    "To close a ticket, add a short closing comment with add_issue_comment, then call transition_issue. "
+    "add_issue_comment converts paragraphs, '- ' bullet lists, and backtick inline code to ADF; "
+    "validate_only=true returns the ADF without any request. If a comment write fails or times out, "
+    "check get_issue_comments before retrying. "
     "Use list_issue_link_types() before create_issue_link(link_type_id, inward_issue, outward_issue). "
     "For the standard Blocks type, inward_issue blocks outward_issue. "
     "Read existing issue links with get_issue(fields=['issuelinks']). "
@@ -83,6 +87,7 @@ INSTRUCTIONS = (
     "assignee_account_id, parent, additional_fields, validate_only); "
     "get_current_user(); search_users(query, start_at, max_results); "
     "get_issue_transitions(issue); transition_issue(issue, transition_id, fields); "
+    "add_issue_comment(issue, body, visibility, validate_only); "
     "list_issue_link_types(); create_issue_link(link_type_id, inward_issue, outward_issue); "
     "get_issue_remote_links(issue); create_issue_remote_link(issue, url, title)."
 )

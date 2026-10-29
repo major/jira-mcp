@@ -6,6 +6,7 @@ from fastmcp import Client
 
 from jira_mcp import main, mcp
 from tests.helpers import invoke
+from tests.test_tool_inventory import TOOLS
 
 pytestmark = pytest.mark.usefixtures("jira_env")
 
@@ -103,24 +104,7 @@ async def test_discovery_without_credentials(monkeypatch):
         result = await client.call_tool("list_fields", {}, raise_on_error=False)
         issue_result = await client.call_tool("list_fields", {"issue": "DEMO-1"}, raise_on_error=False)
 
-    assert {tool.name for tool in tools} == {
-        "create_issue",
-        "get_issue",
-        "get_issues",
-        "get_issue_comments",
-        "list_fields",
-        "list_project_issue_types",
-        "list_create_fields",
-        "get_current_user",
-        "search_users",
-        "search_issues",
-        "get_issue_transitions",
-        "list_issue_link_types",
-        "get_issue_remote_links",
-        "transition_issue",
-        "create_issue_link",
-        "create_issue_remote_link",
-    }
+    assert {tool.name for tool in tools} == set(TOOLS)
     schemas = {tool.name: tool.model_dump(by_alias=True)["inputSchema"] for tool in tools}
     issue_description = next(tool.description for tool in tools if tool.name == "get_issue")
     assert issue_description is not None
