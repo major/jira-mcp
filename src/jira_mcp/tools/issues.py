@@ -106,6 +106,7 @@ async def get_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-c
     text_limit: TextLimit = 12_000,
     include_raw_fields: bool = False,
     include_field_metadata: bool = False,
+    text_offset: Offset = 0,
 ) -> dict[str, Any]:
     """Get one ticket by key or numeric ID, including its description by default.
 
@@ -116,7 +117,13 @@ async def get_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-c
     separately as text with character count and truncation status. Request raw ADF
     to retain rich content. Set include_field_metadata to add field_metadata, which
     maps returned field IDs (except description) to their names and schemas.
+
+    A truncated description includes next_offset. Pass it back as text_offset to
+    read the next slice; continuation pages return only id, key, and description
+    text, and ignore field and raw options. Edits between reads can shift offsets.
     """
+    if text_offset:
+        return await get_description_page(issue, ctx, text_offset, text_limit)
     params = {"fields": ",".join(fields) if fields is not None else DEFAULT_FIELDS}
     if include_field_metadata:
         params["expand"] = "names,schema"
@@ -127,6 +134,27 @@ async def get_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-c
     if include_field_metadata:
         result["field_metadata"] = field_metadata([payload], payload.names, payload.field_schema)
     return result
+
+
+async def get_description_page(issue: str, ctx: Context, offset: int, limit: int) -> dict[str, Any]:
+    """Read one later slice of a description, fetching only that field to keep the page small.
+
+    Raw ADF is never repeated here because the first page already returned it on request.
+    """
+    data = await get_client(ctx).get(f"issue/{issue}", params={"fields": "description"})
+    payload = validate_payload(IssuePayload, data)
+    result: dict[str, Any] = {"id": payload.id, "key": payload.key}
+    if "description" in payload.fields:
+        description = render_text(payload.fields["description"], limit=limit, include_raw=False, offset=offset)
+        result["description"] = add_next_offset(description, offset, limit)
+    return result
+
+
+def add_next_offset(description: dict[str, Any], offset: int, limit: int) -> dict[str, Any]:
+    """Tell the caller where the next slice starts while text remains."""
+    if description["truncated"]:
+        description["next_offset"] = offset + limit
+    return description
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -146,7 +174,8 @@ async def get_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-
     Fields replace the same defaults as get_issue; ['*all'] requests all fields.
     Results use get_issue's field and description format. The text limit applies
     per issue, and optional raw ADF is not truncated. Optional field_metadata is
-    returned once for all issues, not per issue.
+    returned once for all issues, not per issue. Pass a description's next_offset
+    to get_issue as text_offset to read the rest.
 
     Jira returns canonical IDs and keys in its own order, normally ascending ID,
     not input order. Missing or inaccessible tickets can be silently omitted from
@@ -216,7 +245,8 @@ def render_issue(
     values = payload.fields.copy()
     result = {"id": payload.id, "key": payload.key, "fields": values}
     if "description" in values:
-        result["description"] = render_text(values.pop("description"), limit=text_limit, include_raw=include_raw_adf)
+        description = render_text(values.pop("description"), limit=text_limit, include_raw=include_raw_adf)
+        result["description"] = add_next_offset(description, 0, text_limit)
     if not include_raw_fields:
         result["fields"] = {field_id: strip_noise(value) for field_id, value in values.items()}
     return result
@@ -250,7 +280,8 @@ async def search_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls se
     Fields replace defaults, but key is always requested for identity. Responses
     use get_issue's field and description format, including the raw field
     opt-in; text_limit applies per issue. Optional field_metadata is returned
-    once per page, not per issue.
+    once per page, not per issue. Pass a description's next_offset to get_issue
+    as text_offset to read the rest.
     The enhanced search POST only reads data and avoids URL-length limits.
     """
     selected = list(fields) if fields is not None else DEFAULT_FIELDS.split(",")

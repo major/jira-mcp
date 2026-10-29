@@ -77,6 +77,58 @@ async def test_issue_null_and_absent_description(mock_jira, has_description):
         assert "description" not in data
 
 
+@pytest.mark.parametrize(
+    ("offset", "expected"),
+    [
+        (4, {"text": "efgh", "characters": 10, "truncated": True, "next_offset": 8}),
+        (8, {"text": "ij", "characters": 10, "truncated": False}),
+        (20, {"text": "", "characters": 10, "truncated": False}),
+    ],
+)
+async def test_issue_description_continuation_pages(mock_jira, offset, expected):
+    """Return only identity and the next description slice, fetching just the description field."""
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"id": "1", "key": "DEMO-1", "fields": {"description": "abcdefghij"}}))
+    args = {
+        "issue": "DEMO-1",
+        "text_limit": 4,
+        "text_offset": offset,
+        "include_field_metadata": True,
+        "include_raw_adf": True,
+    }
+
+    result = await invoke("get_issue", args)
+
+    assert not result.is_error
+    assert result.structured_content == {"id": "1", "key": "DEMO-1", "description": expected}
+    assert dict(requests[0].url.params) == {"fields": "description"}
+
+
+async def test_issue_description_first_page_offers_next_offset(mock_jira):
+    """Point a truncated first page at the next slice, and omit description when Jira hides it."""
+    _, responses = mock_jira
+    responses.extend(
+        [
+            httpx2.Response(
+                200, json={"id": "1", "key": "DEMO-1", "fields": {"summary": "S", "description": "abcdefghij"}}
+            ),
+            httpx2.Response(200, json={"id": "1", "key": "DEMO-1", "fields": {}}),
+        ]
+    )
+
+    first = await invoke("get_issue", {"issue": "DEMO-1", "text_limit": 4})
+    hidden = await invoke("get_issue", {"issue": "DEMO-1", "text_offset": 4})
+
+    assert first.structured_content["fields"] == {"summary": "S"}
+    assert first.structured_content["description"] == {
+        "text": "abcd",
+        "characters": 10,
+        "truncated": True,
+        "next_offset": 4,
+    }
+    assert hidden.structured_content == {"id": "1", "key": "DEMO-1"}
+
+
 async def test_issue_requires_fields(mock_jira):
     """Keep single-issue validation strict when Jira omits the fields object."""
     requests, responses = mock_jira
@@ -365,7 +417,7 @@ async def test_bulk_issues_render_like_single_issue(mock_jira, description):
     assert item == single.structured_content
     assert item["fields"] == {"customfield_1": {"child": [1, {"value": "nested"}]}, "customfield_2": None}
     if description == "adf":
-        assert item["description"] == {"text": "abc", "characters": 6, "truncated": True, "adf": adf}
+        assert item["description"] == {"text": "abc", "characters": 6, "truncated": True, "adf": adf, "next_offset": 3}
     elif description == "null":
         assert item["description"] == {"text": "", "characters": 0, "truncated": False, "adf": None}
     else:
@@ -392,8 +444,8 @@ async def test_bulk_issues_default_text_limit_applies_to_each_issue(mock_jira):
 
     assert not result.is_error
     assert [issue["description"] for issue in result.structured_content["issues"]] == [
-        {"text": "x" * 12_000, "characters": 12_001, "truncated": True},
-        {"text": "y" * 12_000, "characters": 12_002, "truncated": True},
+        {"text": "x" * 12_000, "characters": 12_001, "truncated": True, "next_offset": 12_000},
+        {"text": "y" * 12_000, "characters": 12_002, "truncated": True, "next_offset": 12_000},
     ]
     assert len(requests) == 1
 
@@ -549,13 +601,13 @@ async def test_issue_search_defaults_and_issue_shapes(mock_jira):
                 "id": "1",
                 "key": "DEMO-1",
                 "fields": {"summary": "First", "customfield_100": {"items": [1, None]}, "customfield_200": 3},
-                "description": {"text": "abc", "characters": 6, "truncated": True, "adf": body},
+                "description": {"text": "abc", "characters": 6, "truncated": True, "adf": body, "next_offset": 3},
             },
             {
                 "id": "2",
                 "key": "DEMO-2",
                 "fields": {"customfield_100": None},
-                "description": {"text": "ghi", "characters": 5, "truncated": True, "adf": "ghijk"},
+                "description": {"text": "ghi", "characters": 5, "truncated": True, "adf": "ghijk", "next_offset": 3},
             },
             {
                 "id": "3",
@@ -668,6 +720,7 @@ async def test_issue_search_default_text_limit_and_raw_setting(mock_jira):
         "text": "x" * 2000,
         "characters": 2001,
         "truncated": True,
+        "next_offset": 2000,
     }
     assert len(requests) == 1
 
