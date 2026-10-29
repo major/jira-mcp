@@ -20,7 +20,7 @@ jobs:
       id-token: write
     steps:
       - name: Check out
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -39,7 +39,7 @@ jobs:
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && vars.ENABLE_CODECOV == 'true' }}
         continue-on-error: ${{ github.event_name == 'pull_request' }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: coverage.xml
           fail_ci_if_error: true
