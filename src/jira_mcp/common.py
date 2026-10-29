@@ -12,6 +12,7 @@ IssueId = Annotated[str, Field(pattern=r"^[1-9][0-9]*$", max_length=255)]
 Offset = Annotated[int, Field(ge=0)]
 PageSize = Annotated[int, Field(ge=1, le=100)]
 NonemptyString = Annotated[str, Field(min_length=1)]
+AccountId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^\S+$")]
 
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 CREATE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}

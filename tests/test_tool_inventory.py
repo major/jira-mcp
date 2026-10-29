@@ -23,6 +23,7 @@ TOOLS = {
     "create_issue": "create",
     "get_issue_transitions": "read",
     "transition_issue": "write",
+    "assign_issue": "write",
     "list_issue_link_types": "read",
     "create_issue_link": "write",
     "get_issue_remote_links": "read",

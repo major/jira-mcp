@@ -56,6 +56,6 @@ async def transition_issue(
     try:
         await client.post(f"issue/{issue}/transitions", body, expect_json=False)
     except ToolError as exc:
-        message = f"{exc} {WRITE_OUTCOME_UNKNOWN}"
+        message = f"{str(exc).rstrip('.')}. {WRITE_OUTCOME_UNKNOWN}"
         raise ToolError(message) from None
     return {"issue": issue, "transition_id": transition_id, "success": True}
