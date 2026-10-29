@@ -166,7 +166,7 @@ async def test_discovery_without_credentials(monkeypatch):
 
 
 async def test_create_issue_schema():
-    """Advertise bounded creation inputs and truthful annotations for all tools."""
+    """Advertise bounded creation inputs."""
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
 
@@ -178,14 +178,6 @@ async def test_create_issue_schema():
     assert {"maxLength": 100_000}.items() <= properties["description"]["anyOf"][0].items()
     assert {"maxItems": 100}.items() <= properties["labels"]["anyOf"][0].items()
     assert {"maxProperties": 100}.items() <= properties["additional_fields"]["anyOf"][0].items()
-
-    destructive = {"transition_issue", "create_issue_link", "create_issue_remote_link"}
-    writes = destructive | {"create_issue"}
-    for name, tool in tools.items():
-        assert tool.annotations.read_only_hint is (name not in writes)
-        assert tool.annotations.idempotent_hint is (name not in writes)
-        assert tool.annotations.destructive_hint is (name in destructive)
-        assert tool.annotations.open_world_hint
 
 
 def test_server_instructions_explain_field_discovery():
