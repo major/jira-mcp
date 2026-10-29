@@ -7,9 +7,9 @@ import pytest
 from fastmcp import Client
 
 from jira_mcp import mcp
-from tests.test_server import invoke
-from tests.test_server import jira_env as jira_env  # noqa: PLC0414 - Re-export shared pytest fixture.
-from tests.test_server import mock_jira as mock_jira  # noqa: PLC0414 - Re-export shared pytest fixture.
+from tests.helpers import invoke
+
+pytestmark = pytest.mark.usefixtures("jira_env")
 
 
 async def test_transition_discovery_preserves_metadata_and_resolution(mock_jira):

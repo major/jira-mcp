@@ -11,45 +11,9 @@ from fastmcp import Client
 from jira_mcp import main, mcp
 from jira_mcp.client import JiraClient
 from jira_mcp.fields import FieldCatalogCache
+from tests.helpers import invoke
 
-
-@pytest.fixture(autouse=True)
-def jira_env(monkeypatch):
-    """Provide deterministic Cloud credentials without using a real token."""
-    monkeypatch.setenv("JIRA_URL", "https://example.atlassian.net")
-    monkeypatch.setenv("JIRA_EMAIL", "reader@example.com")
-    monkeypatch.setenv("JIRA_API_TOKEN", "test-secret")
-    monkeypatch.delenv("JIRA_TIMEOUT", raising=False)
-    monkeypatch.delenv("JIRA_ENABLE_ISSUE_CREATION", raising=False)
-
-
-@pytest.fixture
-def mock_jira(monkeypatch):
-    """Inject a native HTTPX2 transport while preserving the real client lifecycle."""
-    requests = []
-    responses = []
-    original_init = JiraClient.__init__
-
-    def handle(request):
-        """Capture one request and return the next arranged response."""
-        requests.append(request)
-        response = responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    def initialize(self, settings):
-        """Use the production initializer with a network-free transport."""
-        original_init(self, settings, transport=httpx2.MockTransport(handle))
-
-    monkeypatch.setattr(JiraClient, "__init__", initialize)
-    return requests, responses
-
-
-async def invoke(name, arguments=None):
-    """Call a registered tool through the MCP protocol."""
-    async with Client(mcp) as client:
-        return await client.call_tool(name, arguments or {}, raise_on_error=False)
+pytestmark = pytest.mark.usefixtures("jira_env")
 
 
 async def test_issue_defaults_and_cloud_auth(mock_jira):

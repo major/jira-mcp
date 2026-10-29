@@ -27,6 +27,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
   `httpx2.MockTransport`. RESPX targets HTTPX, not HTTPX2.
 - Tests block outbound sockets. Never use real credentials, sleeps, or busy loops.
 - Use Arrange-Act-Assert, fixtures, and parameterization. Keep tests independent.
+- Shared fixtures (`jira_env`, `mock_jira`) live in `tests/conftest.py`; call tools with `tests/helpers.py:invoke`.
 - Keep field IDs and original custom-field values. Names are not unique.
 - Preserve pagination, truncation indicators, and optional unchanged ADF.
 - Never expose token values, upstream error bodies, or transport exception text.
