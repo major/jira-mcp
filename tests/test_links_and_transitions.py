@@ -1,4 +1,4 @@
-"""Exercise transition and link tools through the MCP and Jira boundaries."""
+"""Exercise transition and link tools through the MCP and Jira boundaries 🔗."""
 
 import json
 
