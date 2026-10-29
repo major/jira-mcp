@@ -12,7 +12,7 @@ pytestmark = pytest.mark.usefixtures("jira_env")
 
 
 async def test_issue_defaults_and_cloud_auth(mock_jira):
-    """Retrieve a compact ticket with text description and field names."""
+    """Retrieve a compact ticket with text description and no field metadata by default."""
     requests, responses = mock_jira
     responses.append(
         httpx2.Response(
@@ -41,18 +41,18 @@ async def test_issue_defaults_and_cloud_auth(mock_jira):
     assert data["key"] == "DEMO-1"
     assert data["description"] == {"text": "Details", "characters": 7, "truncated": False}
     assert data["fields"] == {"summary": "Hello", "customfield_100": None}
-    assert data["field_metadata"] == {"customfield_100": {"name": "Team", "schema": {"type": "string"}}}
+    assert "field_metadata" not in data
     request = requests[0]
     assert str(request.url).startswith("https://example.atlassian.net/rest/api/3/issue/DEMO-1?")
     assert "description" in request.url.params["fields"]
-    assert request.url.params["expand"] == "names,schema"
+    assert "expand" not in request.url.params
     encoded = base64.b64encode(b"reader@example.com:test-secret").decode()
     assert request.headers["authorization"] == f"Basic {encoded}"
 
 
 @pytest.mark.parametrize("has_description", [True, False])
 async def test_issue_null_and_absent_description(mock_jira, has_description):
-    """Distinguish null from an omitted description and retain its metadata."""
+    """Distinguish null from an omitted description."""
     _, responses = mock_jira
     fields = {"summary": "Example", **({"description": None} if has_description else {})}
     responses.append(
@@ -62,8 +62,6 @@ async def test_issue_null_and_absent_description(mock_jira, has_description):
                 "id": "1",
                 "key": "DEMO-1",
                 "fields": fields,
-                "names": {"description": "Description"},
-                "schema": {"description": {"type": "any"}},
             },
         )
     )
@@ -75,10 +73,8 @@ async def test_issue_null_and_absent_description(mock_jira, has_description):
     assert data["fields"] == {"summary": "Example"}
     if has_description:
         assert data["description"] == {"text": "", "characters": 0, "truncated": False, "adf": None}
-        assert data["field_metadata"] == {"description": {"name": "Description", "schema": {"type": "any"}}}
     else:
         assert "description" not in data
-        assert data["field_metadata"] == {}
 
 
 async def test_issue_requires_fields(mock_jira):
@@ -144,7 +140,7 @@ async def test_issue_values_and_duplicate_names_are_self_describing(mock_jira):
         )
     )
 
-    result = await invoke("get_issue", {"issue": "DEMO-1", "fields": ["*all"]})
+    result = await invoke("get_issue", {"issue": "DEMO-1", "fields": ["*all"], "include_field_metadata": True})
 
     assert not result.is_error
     assert result.structured_content["fields"] == values
@@ -223,7 +219,7 @@ async def test_bulk_issues_defaults_deduplication_and_canonical_order(mock_jira)
 
     assert not result.is_error
     assert result.structured_content == {
-        "issues": [{**issue, "field_metadata": {}} for issue in returned],
+        "issues": returned,
         "errors": [],
         "omissions_possible": True,
     }
@@ -246,7 +242,6 @@ async def test_bulk_issues_defaults_deduplication_and_canonical_order(mock_jira)
             "updated",
             "description",
         ],
-        "expand": ["names", "schema"],
     }
     encoded = base64.b64encode(b"reader@example.com:test-secret").decode()
     assert request.headers["authorization"] == f"Basic {encoded}"
@@ -268,7 +263,6 @@ async def test_bulk_issues_explicit_fields_and_gateway(mock_jira, monkeypatch, f
     assert json.loads(requests[0].content) == {
         "issueIdsOrKeys": ["123"],
         "fields": fields,
-        "expand": ["names", "schema"],
     }
 
 
@@ -306,8 +300,8 @@ async def test_bulk_issues_accept_maximum_field_and_id_lengths(mock_jira):
     assert len(requests) == 1
 
 
-async def test_bulk_issues_keep_metadata_from_each_issue(mock_jira):
-    """Use each issue's own names and schemas instead of sharing page metadata."""
+async def test_bulk_issues_merge_metadata_once(mock_jira):
+    """Merge each issue's names and schemas into one top-level map without description."""
     requests, responses = mock_jira
     responses.append(
         httpx2.Response(
@@ -317,35 +311,38 @@ async def test_bulk_issues_keep_metadata_from_each_issue(mock_jira):
                     {
                         "id": "1",
                         "key": "DEMO-1",
-                        "fields": {"customfield_1": "one"},
-                        "names": {"customfield_1": "First"},
+                        "fields": {"customfield_1": "one", "description": None},
+                        "names": {"customfield_1": "First", "description": "Description"},
                         "schema": {"customfield_1": {"type": "string"}},
                     },
                     {
                         "id": "2",
                         "key": "DEMO-2",
-                        "fields": {"customfield_1": 2},
-                        "names": {"customfield_1": "Second"},
-                        "schema": {"customfield_1": {"type": "number"}},
+                        "fields": {"customfield_1": "two", "customfield_2": 2},
+                        "names": {"customfield_1": "First", "customfield_2": "Second"},
+                        "schema": {"customfield_1": {"type": "string"}, "customfield_2": {"type": "number"}},
                     },
                 ]
             },
         )
     )
 
-    result = await invoke("get_issues", {"issues": ["DEMO-1", "DEMO-2"]})
+    result = await invoke("get_issues", {"issues": ["DEMO-1", "DEMO-2"], "include_field_metadata": True})
 
     assert not result.is_error
-    assert [issue["field_metadata"] for issue in result.structured_content["issues"]] == [
-        {"customfield_1": {"name": "First", "schema": {"type": "string"}}},
-        {"customfield_1": {"name": "Second", "schema": {"type": "number"}}},
-    ]
+    data = result.structured_content
+    assert data["field_metadata"] == {
+        "customfield_1": {"name": "First", "schema": {"type": "string"}},
+        "customfield_2": {"name": "Second", "schema": {"type": "number"}},
+    }
+    assert all("field_metadata" not in issue for issue in data["issues"])
+    assert json.loads(requests[0].content)["expand"] == ["names", "schema"]
     assert len(requests) == 1
 
 
 @pytest.mark.parametrize("description", ["adf", "null", "absent"])
 async def test_bulk_issues_render_like_single_issue(mock_jira, description):
-    """Preserve each issue's metadata, nested values, and description behavior."""
+    """Preserve each issue's nested values and description behavior."""
     requests, responses = mock_jira
     adf = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "abcdef"}]}]}
     fields = {"customfield_1": {"child": [1, {"value": "nested"}]}, "customfield_2": None}
@@ -355,8 +352,6 @@ async def test_bulk_issues_render_like_single_issue(mock_jira, description):
         "id": "123",
         "key": "MOVED-2",
         "fields": fields,
-        "names": {"description": "Description", "customfield_1": "Team", "customfield_2": "Team"},
-        "schema": {"description": {"type": "any"}, "customfield_1": {"type": "option"}},
     }
     responses.extend([httpx2.Response(200, json={"issues": [issue]}), httpx2.Response(200, json=issue)])
     options = {"fields": ["*all"], "include_raw_adf": True, "text_limit": 3}
@@ -369,11 +364,6 @@ async def test_bulk_issues_render_like_single_issue(mock_jira, description):
     item = bulk.structured_content["issues"][0]
     assert item == single.structured_content
     assert item["fields"] == {"customfield_1": {"child": [1, {"value": "nested"}]}, "customfield_2": None}
-    assert item["field_metadata"] == {
-        "customfield_1": {"name": "Team", "schema": {"type": "option"}},
-        "customfield_2": {"name": "Team"},
-        **({"description": {"name": "Description", "schema": {"type": "any"}}} if description != "absent" else {}),
-    }
     if description == "adf":
         assert item["description"] == {"text": "abc", "characters": 6, "truncated": True, "adf": adf}
     elif description == "null":
@@ -413,7 +403,7 @@ async def test_bulk_issues_default_text_limit_applies_to_each_issue(mock_jira):
     [
         (
             {"issues": [{"id": "1", "key": "DEMO-1", "fields": {}}], "issueErrors": [{"id": "2"}]},
-            [{"id": "1", "key": "DEMO-1", "fields": {}, "field_metadata": {}}],
+            [{"id": "1", "key": "DEMO-1", "fields": {}}],
             [{"id": "2", "message": "Jira could not return this issue."}],
         ),
         (
@@ -503,7 +493,7 @@ async def test_bulk_issues_invalid_payloads_are_safe(mock_jira, payload):
 
 
 async def test_issue_search_defaults_and_issue_shapes(mock_jira):
-    """Render each issue like get_issue using the shared page metadata."""
+    """Render each issue like get_issue and return page metadata once without description."""
     requests, responses = mock_jira
     body = {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "abcdef"}]}]}
     responses.append(
@@ -542,41 +532,38 @@ async def test_issue_search_defaults_and_issue_shapes(mock_jira):
         )
     )
 
-    result = await invoke("search_issues", {"jql": "project = DEMO", "include_raw_adf": True, "text_limit": 3})
+    result = await invoke(
+        "search_issues",
+        {"jql": "project = DEMO", "include_raw_adf": True, "text_limit": 3, "include_field_metadata": True},
+    )
 
     assert not result.is_error
     assert result.structured_content == {
+        "field_metadata": {
+            "summary": {"name": "Summary"},
+            "customfield_100": {"name": "Example", "schema": {"type": "array"}},
+            "customfield_200": {"schema": {"type": "number"}},
+        },
         "issues": [
             {
                 "id": "1",
                 "key": "DEMO-1",
                 "fields": {"summary": "First", "customfield_100": {"items": [1, None]}, "customfield_200": 3},
-                "field_metadata": {
-                    "summary": {"name": "Summary"},
-                    "description": {"name": "Description", "schema": {"type": "any"}},
-                    "customfield_100": {"name": "Example", "schema": {"type": "array"}},
-                    "customfield_200": {"schema": {"type": "number"}},
-                },
                 "description": {"text": "abc", "characters": 6, "truncated": True, "adf": body},
             },
             {
                 "id": "2",
                 "key": "DEMO-2",
                 "fields": {"customfield_100": None},
-                "field_metadata": {
-                    "description": {"name": "Description", "schema": {"type": "any"}},
-                    "customfield_100": {"name": "Example", "schema": {"type": "array"}},
-                },
                 "description": {"text": "ghi", "characters": 5, "truncated": True, "adf": "ghijk"},
             },
             {
                 "id": "3",
                 "key": "DEMO-3",
                 "fields": {},
-                "field_metadata": {"description": {"name": "Description", "schema": {"type": "any"}}},
                 "description": {"text": "", "characters": 0, "truncated": False, "adf": None},
             },
-            {"id": "4", "key": "DEMO-4", "fields": {}, "field_metadata": {}},
+            {"id": "4", "key": "DEMO-4", "fields": {}},
         ],
         "next_page_token": "opaque+token/é=",
     }
@@ -628,7 +615,6 @@ async def test_issue_search_gateway_and_opaque_json(mock_jira, monkeypatch):
         "jql": jql,
         "maxResults": 1,
         "fields": ["id", "key"],
-        "expand": "names,schema",
         "nextPageToken": continuation,
     }
     encoded = base64.b64encode(b"reader@example.com:test-secret").decode()
@@ -655,7 +641,7 @@ async def test_issue_search_explicit_fields(mock_jira, fields, expected):
 
     assert not result.is_error
     assert result.structured_content == {
-        "issues": [{"id": "1", "key": "DEMO-1", "fields": {}, "field_metadata": {}}],
+        "issues": [{"id": "1", "key": "DEMO-1", "fields": {}}],
         "next_page_token": None,
     }
     request_data = json.loads(requests[0].content)

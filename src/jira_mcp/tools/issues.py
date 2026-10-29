@@ -1,6 +1,7 @@
 """Read Jira issues, bulk issue fetches, JQL search results, and comments."""
 
 from typing import Annotated, Any
+lazy from collections.abc import Sequence
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
 from fastmcp.exceptions import ToolError
@@ -104,27 +105,28 @@ async def get_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-c
     include_raw_adf: bool = False,
     text_limit: TextLimit = 12_000,
     include_raw_fields: bool = False,
+    include_field_metadata: bool = False,
 ) -> dict[str, Any]:
     """Get one ticket by key or numeric ID, including its description by default.
 
     Explicit fields replace defaults. Request ['*all'] only when the full potentially
-    large field set is needed. Use returned field_metadata instead of extra lookups;
-    list_fields can discover IDs before requesting values.
+    large field set is needed. list_fields can discover IDs before requesting values.
     Field values are Jira JSON without self, iconUrl, avatarUrls, or colorName keys
     at any depth; set include_raw_fields to keep them. Description is returned
     separately as text with character count and truncation status. Request raw ADF
-    to retain rich content. Metadata maps returned field IDs to their names and schemas.
+    to retain rich content. Set include_field_metadata to add field_metadata, which
+    maps returned field IDs (except description) to their names and schemas.
     """
-    data = await get_client(ctx).get(
-        f"issue/{issue}",
-        params={"fields": ",".join(fields) if fields is not None else DEFAULT_FIELDS, "expand": "names,schema"},
+    params = {"fields": ",".join(fields) if fields is not None else DEFAULT_FIELDS}
+    if include_field_metadata:
+        params["expand"] = "names,schema"
+    payload = validate_payload(IssuePayload, await get_client(ctx).get(f"issue/{issue}", params=params))
+    result = render_issue(
+        payload, text_limit=text_limit, include_raw_adf=include_raw_adf, include_raw_fields=include_raw_fields
     )
-    return render_issue(
-        validate_payload(IssuePayload, data),
-        text_limit=text_limit,
-        include_raw_adf=include_raw_adf,
-        include_raw_fields=include_raw_fields,
-    )
+    if include_field_metadata:
+        result["field_metadata"] = field_metadata([payload], payload.names, payload.field_schema)
+    return result
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -136,13 +138,15 @@ async def get_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-
     include_raw_adf: bool = False,
     text_limit: TextLimit = 12_000,
     include_raw_fields: bool = False,
+    include_field_metadata: bool = False,
 ) -> dict[str, Any]:
     """Fetch 1 to 20 Jira tickets by key or numeric ID in one read-only request.
 
     Exact duplicate input strings are collapsed after the 20-item bound is checked.
     Fields replace the same defaults as get_issue; ['*all'] requests all fields.
     Results use get_issue's field and description format. The text limit applies
-    per issue, and optional raw ADF is not truncated.
+    per issue, and optional raw ADF is not truncated. Optional field_metadata is
+    returned once for all issues, not per issue.
 
     Jira returns canonical IDs and keys in its own order, normally ascending ID,
     not input order. Missing or inaccessible tickets can be silently omitted from
@@ -150,13 +154,20 @@ async def get_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-
     omissions_possible is always true and is not a request to retry. This tool
     makes no automatic follow-up requests.
     """
-    body = {
+    body: dict[str, Any] = {
         "issueIdsOrKeys": list(dict.fromkeys(issues)),
         "fields": list(fields) if fields is not None else DEFAULT_FIELDS.split(","),
-        "expand": ["names", "schema"],
     }
+    if include_field_metadata:
+        body["expand"] = ["names", "schema"]
     payload = validate_payload(BulkIssuePayload, await get_client(ctx).post("issue/bulkfetch", body))
-    return {
+    result: dict[str, Any] = {}
+    if include_field_metadata:
+        # Bulk fetch returns metadata per issue, but field IDs are site-wide, so one merged map is enough.
+        names = {key: value for issue in payload.issues for key, value in issue.names.items()}
+        schemas = {key: value for issue in payload.issues for key, value in issue.field_schema.items()}
+        result["field_metadata"] = field_metadata(payload.issues, names, schemas)
+    return result | {
         "issues": [
             render_issue(
                 issue,
@@ -180,20 +191,30 @@ def strip_noise(value: Any) -> Any:
     return value
 
 
+def field_metadata(
+    issues: Sequence[IssuePayload], names: dict[str, str], schemas: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Map returned field IDs to known names and schemas, once for all issues.
+
+    Description is left out because it is rendered as its own top-level text envelope.
+    """
+    field_ids = dict.fromkeys(field_id for issue in issues for field_id in issue.fields)
+    return {
+        field_id: {
+            **({"name": names[field_id]} if field_id in names else {}),
+            **({"schema": schemas[field_id]} if field_id in schemas else {}),
+        }
+        for field_id in field_ids
+        if field_id != "description" and (field_id in names or field_id in schemas)
+    }
+
+
 def render_issue(
     payload: IssuePayload, *, text_limit: int, include_raw_adf: bool, include_raw_fields: bool
 ) -> dict[str, Any]:
-    """Render selected fields without losing description metadata, nulls, or field IDs."""
+    """Render selected fields without losing description status, nulls, or field IDs."""
     values = payload.fields.copy()
-    metadata = {
-        field_id: {
-            **({"name": payload.names[field_id]} if field_id in payload.names else {}),
-            **({"schema": payload.field_schema[field_id]} if field_id in payload.field_schema else {}),
-        }
-        for field_id in values
-        if field_id in payload.names or field_id in payload.field_schema
-    }
-    result = {"id": payload.id, "key": payload.key, "fields": values, "field_metadata": metadata}
+    result = {"id": payload.id, "key": payload.key, "fields": values}
     if "description" in values:
         result["description"] = render_text(values.pop("description"), limit=text_limit, include_raw=include_raw_adf)
     if not include_raw_fields:
@@ -212,6 +233,7 @@ async def search_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls se
     include_raw_adf: bool = False,
     text_limit: TextLimit = 2_000,
     include_raw_fields: bool = False,
+    include_field_metadata: bool = False,
 ) -> dict[str, Any]:
     """Search ticket titles, descriptions, and metadata using bounded Jira JQL.
 
@@ -227,23 +249,29 @@ async def search_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls se
     only includes visible tickets and recent changes can lag behind the index.
     Fields replace defaults, but key is always requested for identity. Responses
     use get_issue's field and description format, including the raw field
-    opt-in; text_limit applies per issue.
+    opt-in; text_limit applies per issue. Optional field_metadata is returned
+    once per page, not per issue.
     The enhanced search POST only reads data and avoids URL-length limits.
     """
     selected = list(fields) if fields is not None else DEFAULT_FIELDS.split(",")
     if "key" not in selected:
         selected.append("key")
-    body: dict[str, Any] = {"jql": jql, "maxResults": max_results, "fields": selected, "expand": "names,schema"}
+    body: dict[str, Any] = {"jql": jql, "maxResults": max_results, "fields": selected}
+    if include_field_metadata:
+        body["expand"] = "names,schema"
     if next_page_token is not None:
         body["nextPageToken"] = next_page_token
     page = validate_payload(IssueSearchPage, await get_client(ctx).post("search/jql", body))
     # Jira may omit isLast, but an explicit flag must agree with its continuation token.
     if "is_last" in page.model_fields_set and page.is_last != (page.next_page_token is None):
         raise ToolError(INVALID_PAYLOAD)
-    return {
+    result: dict[str, Any] = {}
+    if include_field_metadata:
+        result["field_metadata"] = field_metadata(page.issues, page.names, page.field_schema)
+    return result | {
         "issues": [
             render_issue(
-                issue.model_copy(update={"names": page.names, "field_schema": page.field_schema}),
+                issue,
                 text_limit=text_limit,
                 include_raw_adf=include_raw_adf,
                 include_raw_fields=include_raw_fields,
