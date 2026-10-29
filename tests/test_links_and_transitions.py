@@ -400,23 +400,11 @@ async def test_missing_configuration_is_not_reported_as_an_attempted_write(monke
     assert "outcome may be unknown" not in result.content[0].text
 
 
-async def test_workflow_tool_annotations():
-    """Describe discovery as read-only and writes as potentially destructive."""
+async def test_link_direction_is_described():
+    """Explain which issue blocks the other for the standard Blocks link type."""
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
 
-    for name in ("get_issue_transitions", "list_issue_link_types", "get_issue_remote_links"):
-        annotation = tools[name].annotations
-        assert annotation.read_only_hint is True
-        assert annotation.destructive_hint is False
-        assert annotation.idempotent_hint is True
-        assert annotation.open_world_hint is True
-    for name in ("transition_issue", "create_issue_link", "create_issue_remote_link"):
-        annotation = tools[name].annotations
-        assert annotation.read_only_hint is False
-        assert annotation.destructive_hint is True
-        assert annotation.idempotent_hint is False
-        assert annotation.open_world_hint is True
     description = tools["create_issue_link"].description
     assert description is not None
     assert "inward_issue blocks outward_issue" in description

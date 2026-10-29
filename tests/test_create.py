@@ -325,7 +325,7 @@ async def test_create_metadata_http_errors_are_safe(mock_jira, name, args, respo
 
 
 async def test_create_metadata_schemas_and_annotations():
-    """Advertise bounded inputs and read-only annotations for both metadata tools."""
+    """Advertise bounded inputs for both metadata tools."""
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in await client.list_tools()}
 
@@ -334,11 +334,6 @@ async def test_create_metadata_schemas_and_annotations():
     assert schemas[names[0]]["required"] == ["project"]
     assert schemas[names[1]]["required"] == ["project", "issue_type_id"]
     for name in names:
-        annotations = tools[name].annotations
-        assert annotations.read_only_hint
-        assert not annotations.destructive_hint
-        assert annotations.idempotent_hint
-        assert annotations.open_world_hint
         properties = schemas[name]["properties"]
         assert "ctx" not in properties
         assert {"type": "string", "maxLength": 255}.items() <= properties["project"].items()

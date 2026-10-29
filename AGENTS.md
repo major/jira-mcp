@@ -29,6 +29,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - Put it in the matching `tools/<area>.py`. For a new area, add a module and import it in `tools/__init__.py`.
 - Tool modules must not import each other. Move a shared helper to `common.py` only when a second module needs it.
 - Test it in the matching `tests/test_<area>.py`. Keep cross-tool checks in `tests/test_server.py`.
+- Add it to `TOOLS` in `tests/test_tool_inventory.py`, the README tool table, and the instructions' main arguments.
 
 ## Development rules 🧪
 
@@ -37,6 +38,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - Tests block outbound sockets. Never use real credentials, sleeps, or busy loops.
 - Use Arrange-Act-Assert, fixtures, and parameterization. Keep tests independent.
 - Shared fixtures (`jira_env`, `mock_jira`) live in `tests/conftest.py`; call tools with `tests/helpers.py:invoke`.
+- `tests/test_tool_inventory.py` checks that registered tools, annotations, README rows, and instruction arguments agree.
 - Keep field IDs and original custom-field values. Names are not unique.
 - Preserve pagination, truncation indicators, and optional unchanged ADF.
 - Never expose token values, upstream error bodies, or transport exception text.
