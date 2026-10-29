@@ -2,7 +2,7 @@
 
 import pytest
 
-from jira_mcp.text import plain_text_to_adf, render_text
+from jira_mcp.text import markdown_to_adf, plain_text_to_adf, render_text
 
 
 def _task(state, *content):
@@ -56,6 +56,59 @@ TASK_LIST_TEXT = "Action items\n- [ ] Run `uv sync`\n- [x] Ship\n      it\n  - [
 def test_plain_text_to_adf(text, content):
     """Preserve normalized line breaks and blank lines without empty text nodes."""
     assert plain_text_to_adf(text) == {"type": "doc", "version": 1, "content": content}
+
+
+def _para(*content):
+    """Build an ADF paragraph, leaving out empty content."""
+    return {"type": "paragraph", "content": list(content)} if content else {"type": "paragraph"}
+
+
+def _text(text, *, code=False):
+    """Build an ADF text node, optionally with a code mark."""
+    return {"type": "text", "text": text, "marks": [{"type": "code"}]} if code else {"type": "text", "text": text}
+
+
+def _bullets(*items):
+    """Build an ADF bullet list with one paragraph per item."""
+    return {"type": "bulletList", "content": [{"type": "listItem", "content": [item]} for item in items]}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        (
+            "Fixed in `main`.\r\nSee DEMO-1 https://example.org/x\n\n \n- run `uv sync`\n- \nDone",
+            [
+                _para(
+                    _text("Fixed in "),
+                    _text("main", code=True),
+                    _text("."),
+                    {"type": "hardBreak"},
+                    _text("See DEMO-1 https://example.org/x"),
+                ),
+                _bullets(_para(_text("run "), _text("uv sync", code=True)), _para()),
+                _para(_text("Done")),
+            ],
+        ),
+        ("\n\nan `unclosed backtick\n\n", [_para(_text("an `unclosed backtick"))]),
+        ("Done\n", [_para(_text("Done"))]),
+        ("- a\n", [_bullets(_para(_text("a")))]),
+        ("a\n\n    b", [_para(_text("a")), _para(_text("    b"))]),
+        ("``  - not a list", [_para(_text("``  - not a list"))]),
+    ],
+)
+def test_markdown_to_adf(markdown, content):
+    """Convert paragraphs, bullet lists, and inline code, leaving other text unchanged."""
+    assert markdown_to_adf(markdown) == {"type": "doc", "version": 1, "content": content}
+
+
+def test_markdown_to_adf_round_trips_through_rendering():
+    """Render converted code marks and bullets back as Markdown-style text."""
+    markdown = "Closing.\n\n- fixed `parse()`\n- added tests"
+
+    rendered = render_text(markdown_to_adf(markdown), limit=100, include_raw=False)["text"]
+
+    assert rendered == "Closing.\n- fixed `parse()`\n- added tests"
 
 
 @pytest.mark.parametrize(

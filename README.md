@@ -186,6 +186,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
 | `get_issue` | Read ticket fields, description, and optional field metadata. |
 | `get_issue_comments` | Read one oldest-first page of ticket comments. |
+| `add_issue_comment` | Add a comment with simple Markdown, or preview its ADF with `validate_only`. **Writes.** |
 | `get_issues` | Fetch 1 through 20 known tickets in one request. |
 | `list_create_fields` | Discover create-field metadata for one project and issue type. |
 | `list_fields` | Discover field IDs, names, and schemas globally or for one issue. |
@@ -208,6 +209,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `get_current_user` | No arguments |
 | `get_issue` | Compact system fields, 12,000 description characters |
 | `get_issue_comments` | 20 comments, 4,000 characters per body |
+| `add_issue_comment` | Required `issue` and `body`, optional `visibility`, `validate_only` false |
 | `get_issues` | Same fields as `get_issue`, 12,000 description characters per ticket |
 | `list_create_fields` | Required `project` and `issue_type_id`, 50 fields |
 | `list_fields` | 50 fields, optional ID/name search, five-minute catalog cache |
@@ -623,6 +625,31 @@ you read them. Visibility restrictions still apply.
 Comments retain `parentId` (the replied-to comment) and `jsdPublic` (public versus
 internal Service Management visibility) when Jira supplies them. Missing values
 are omitted, not inferred.
+
+### Add a comment 💬
+
+```json
+{"issue": "TEAM-123", "body": "Fixed in `main`.\n\n- added tests\n- updated docs"}
+```
+
+The body supports a small Markdown subset that becomes ADF:
+
+- blank lines separate paragraphs, and single line breaks are kept
+- lines starting with `- ` become bullet list items
+- text in backticks gets the inline `code` mark
+
+Other Markdown stays plain text. Bare URLs and issue keys pass through, and Jira
+links them. Bodies can be up to 32,767 characters. Add
+`"visibility": {"type": "role", "value": "Developers"}` (or `"type": "group"`) to
+restrict who can see the comment.
+
+With `"validate_only": true`, the tool returns the exact `adf` it would send and
+makes no request. Otherwise it makes exactly one POST and returns the new comment
+`id`, the `issue`, and the `created` timestamp. It never retries. If the call fails,
+times out, or is cancelled, the comment may already exist: check
+`get_issue_comments` before retrying.
+
+To close a ticket, add a short closing comment, then call `transition_issue`.
 
 ### Description and comment text
 

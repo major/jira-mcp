@@ -1,6 +1,14 @@
-"""Convert plain text to ADF and render Jira content as readable text."""
+"""Convert plain text or simple Markdown to ADF and render Jira content as readable text."""
 
+import re
+from itertools import groupby
 from typing import Any
+
+# Split on one or more blank lines (lines with only whitespace count as blank).
+BLANK_LINES = re.compile(r"\n(?:[^\S\n]*\n)+")
+# The capture group makes re.split put each code span at an odd index.
+INLINE_CODE = re.compile(r"`([^`]+)`")
+BULLET = "- "
 
 
 def plain_text_to_adf(text: str) -> dict[str, Any]:
@@ -14,6 +22,45 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
             paragraph["content"] = [{"type": "text", "text": line}]
         paragraphs.append(paragraph)
     return {"type": "doc", "version": 1, "content": paragraphs}
+
+
+def markdown_to_adf(text: str) -> dict[str, Any]:
+    """Convert a small Markdown subset to ADF and keep everything else as plain text.
+
+    Blank lines separate paragraphs, lines starting with "- " become bullet list items,
+    other single line breaks become hard breaks, and text in backticks gets a code mark.
+    Bare URLs and issue keys stay text because Jira links them on its own.
+    """
+    # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    blocks: list[dict[str, Any]] = []
+    for chunk in BLANK_LINES.split(normalized):
+        for is_bullet, group in groupby(chunk.split("\n"), key=lambda line: line.startswith(BULLET)):
+            lines = list(group)
+            if is_bullet:
+                items = [{"type": "listItem", "content": [_paragraph([line[len(BULLET) :]])]} for line in lines]
+                blocks.append({"type": "bulletList", "content": items})
+            else:
+                blocks.append(_paragraph(lines))
+    return {"type": "doc", "version": 1, "content": blocks}
+
+
+def _paragraph(lines: list[str]) -> dict[str, Any]:
+    """Join lines with hard breaks in one paragraph, leaving out empty text nodes."""
+    content: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if index:
+            content.append({"type": "hardBreak"})
+        for position, part in enumerate(INLINE_CODE.split(line)):
+            if part:
+                node: dict[str, Any] = {"type": "text", "text": part}
+                if position % 2:
+                    node["marks"] = [{"type": "code"}]
+                content.append(node)
+    paragraph: dict[str, Any] = {"type": "paragraph"}
+    if content:
+        paragraph["content"] = content
+    return paragraph
 
 
 def render_text(body: Any, *, limit: int, include_raw: bool, offset: int = 0) -> dict[str, Any]:
