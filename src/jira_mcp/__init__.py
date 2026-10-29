@@ -1,7 +1,6 @@
 """Jira Cloud MCP server with concise reads, writes, and opt-in issue creation ☁️."""
 
-from jira_mcp import tools as _tools  # noqa: F401 - Import registers the MCP tools.
-from jira_mcp import workflows as _workflows  # noqa: F401 - Import registers the MCP tools.
+from jira_mcp import tools  # noqa: F401 - Importing the package registers every tool.
 from jira_mcp.app import mcp
 
 __all__ = ["main", "mcp"]
