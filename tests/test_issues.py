@@ -154,6 +154,60 @@ async def test_issue_values_and_duplicate_names_are_self_describing(mock_jira):
     assert dict(requests[0].url.params) == {"fields": "*all", "expand": "names,schema"}
 
 
+RAW_NOISY_FIELDS = {
+    "status": {
+        "self": "https://example.atlassian.net/rest/api/3/status/1",
+        "iconUrl": "https://example.atlassian.net/images/status.png",
+        "name": "New",
+        "id": "1",
+        "statusCategory": {
+            "self": "https://example.atlassian.net/rest/api/3/statuscategory/2",
+            "id": 2,
+            "key": "new",
+            "colorName": "blue-gray",
+            "name": "To Do",
+        },
+    },
+    "assignee": {
+        "self": "https://example.atlassian.net/rest/api/3/user?accountId=abc",
+        "accountId": "abc",
+        "avatarUrls": {"48x48": "https://example.atlassian.net/avatar.png"},
+        "displayName": "Reader",
+    },
+    "customfield_1": [{"self": "https://example.atlassian.net/rest/api/3/option/9", "id": "9", "value": "A"}],
+    "customfield_2": None,
+}
+CLEAN_FIELDS = {
+    "status": {"name": "New", "id": "1", "statusCategory": {"id": 2, "key": "new", "name": "To Do"}},
+    "assignee": {"accountId": "abc", "displayName": "Reader"},
+    "customfield_1": [{"id": "9", "value": "A"}],
+    "customfield_2": None,
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("get_issue", {"issue": "DEMO-1"}),
+        ("get_issues", {"issues": ["DEMO-1"]}),
+        ("search_issues", {"jql": "project = DEMO"}),
+    ],
+)
+@pytest.mark.parametrize(("raw", "expected"), [(False, CLEAN_FIELDS), (True, RAW_NOISY_FIELDS)])
+async def test_issue_fields_drop_rest_and_ui_noise_unless_raw(mock_jira, name, args, raw, expected):
+    """Drop self, icon, avatar, and color keys at any depth, or keep them when raw fields are requested."""
+    _, responses = mock_jira
+    issue = {"id": "1", "key": "DEMO-1", "fields": RAW_NOISY_FIELDS}
+    responses.append(httpx2.Response(200, json=issue if name == "get_issue" else {"issues": [issue]}))
+
+    result = await invoke(name, {**args, "include_raw_fields": raw})
+
+    assert not result.is_error
+    data = result.structured_content
+    issue = data if name == "get_issue" else data["issues"][0]
+    assert issue["fields"] == expected
+
+
 async def test_bulk_issues_defaults_deduplication_and_canonical_order(mock_jira):
     """Send one request with exact duplicates removed and retain Jira's response order."""
     requests, responses = mock_jira
