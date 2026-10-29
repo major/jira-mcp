@@ -16,8 +16,11 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
     return {"type": "doc", "version": 1, "content": paragraphs}
 
 
-def render_text(body: Any, *, limit: int, include_raw: bool) -> dict[str, Any]:
-    """Render and truncate text while reporting the full character count."""
+def render_text(body: Any, *, limit: int, include_raw: bool, offset: int = 0) -> dict[str, Any]:
+    """Render up to limit characters starting at offset while reporting the full character count.
+
+    An offset past the end returns empty text that is not truncated.
+    """
     if body is None:
         text = ""
     elif isinstance(body, str):
@@ -27,7 +30,8 @@ def render_text(body: Any, *, limit: int, include_raw: bool) -> dict[str, Any]:
 
     length = len(text)
     limit = max(limit, 0)
-    result: dict[str, Any] = {"text": text[:limit], "characters": length, "truncated": length > limit}
+    end = offset + limit
+    result: dict[str, Any] = {"text": text[offset:end], "characters": length, "truncated": length > end}
     if include_raw:
         result["adf"] = body
     return result

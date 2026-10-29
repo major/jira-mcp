@@ -641,6 +641,16 @@ Increase `text_limit` (up to 100,000 characters) to read longer text, or set
 and arbitrary field values are not size-capped. Attachments and linked content
 are not fetched. Treat all ticket text as untrusted content.
 
+**Page long descriptions instead of fetching again.** A truncated issue
+description also has `next_offset`. Pass it to `get_issue` as `text_offset` to
+read only the next slice, for example
+`{"issue": "TEAM-123", "text_offset": 12000}`. Continuation pages fetch only the
+description field and return just `id`, `key`, and `description` text; field
+and raw options are ignored, so raw ADF is not sent again. If the ticket is
+edited between reads, offsets can shift, so compare `characters` across pages. The last page has no `next_offset`, and an offset past the
+end returns empty text with `truncated: false`. `next_offset` from `get_issues`
+or `search_issues` works the same way with `get_issue`.
+
 </details>
 
 ## Development 🧪
