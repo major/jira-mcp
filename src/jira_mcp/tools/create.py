@@ -11,6 +11,7 @@ from jira_mcp.client import JiraClient, JiraHTTPError
 from jira_mcp.common import (
     CREATE,
     READ_ONLY,
+    AccountId,
     Issue,
     IssueId,
     Offset,
@@ -41,9 +42,6 @@ CreateFieldId = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$", max_len
 
 
 AdditionalFields = Annotated[dict[CreateFieldId, Any], Field(max_length=100)]
-
-
-AccountId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^\S+$")]
 
 
 CanonicalIssueKey = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]*-[1-9][0-9]*$", max_length=255)]

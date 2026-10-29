@@ -39,6 +39,10 @@ class JiraClient:
         """Send JSON, explicitly opting out of decoding for bodyless write responses."""
         return await self._request("POST", path, json=body, expect_json=expect_json)
 
+    async def put(self, path: str, body: dict[str, Any]) -> None:
+        """Send JSON to a bodyless update endpoint such as an issue's assignee."""
+        await self._request("PUT", path, json=body, expect_json=False)
+
     async def _request(
         self,
         method: str,

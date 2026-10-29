@@ -195,6 +195,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `search_users` | Find users by name or email and return Jira account IDs. |
 | `get_issue_transitions` | Discover available transition IDs, target statuses, and transition-screen fields. |
 | `transition_issue` | Apply a transition and optional field values, including resolution. **Writes.** |
+| `assign_issue` | Assign or unassign a ticket, optionally only if the current assignee matches. **Writes.** |
 | `list_issue_link_types` | Discover link type IDs and inward/outward relationship labels. |
 | `create_issue_link` | Link two Jira issues with an explicit type and direction. **Writes.** |
 | `get_issue_remote_links` | List a ticket's remote web links. |
@@ -218,6 +219,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `search_users` | 20 users, required `query` |
 | `get_issue_transitions` | Required `issue`, includes transition field metadata |
 | `transition_issue` | Required `issue` and `transition_id`, optional `fields` |
+| `assign_issue` | Required `issue` and `account_id` (`null` unassigns), optional `expected_assignee` guard |
 | `list_issue_link_types` | No arguments |
 | `create_issue_link` | Required `link_type_id`, `inward_issue`, and `outward_issue` |
 | `get_issue_remote_links` | Required `issue`, returns all visible remote links |
@@ -249,6 +251,26 @@ sends one transition request, not a separate issue edit. Its acknowledgment does
 not infer the final status; read the ticket if you need to verify the result.
 
 See Atlassian's [transition APIs](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issues/#api-rest-api-3-issue-issueidorkey-transitions-get).
+
+### Assign a ticket 👤
+
+```json
+{"issue": "TEAM-123", "account_id": "5b10ac8d82e05b22cc7d4ef5", "expected_assignee": null}
+```
+
+Get account IDs from `get_current_user` or `search_users`. Set `account_id` to
+`null` to unassign. The tool first reads the current assignee. When
+`expected_assignee` is present, nothing changes unless the current assignee
+matches it, and `null` means the ticket must be unassigned. This takes an
+unassigned ticket in one call without overwriting someone else. Leave
+`expected_assignee` out to assign regardless of the current assignee.
+
+Success returns `issue` (the key), `assignee`, and `previous_assignee`. The tool
+makes exactly one PUT and never retries. Errors starting with `No change was made`
+(a guard mismatch, or Jira rejecting the request with HTTP 400, 401, 403, or 404)
+are safe to fix and retry. Errors that say the outcome may be unknown need an
+issue check before retrying. The guard compares the assignee at read time, so a
+change made between the read and the PUT is not detected.
 
 ### Link two Jira issues 🔗
 
