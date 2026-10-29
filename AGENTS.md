@@ -18,9 +18,16 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - `config.py`: Cloud URL validation and environment-based API token credentials.
 - `client.py`: async HTTPX2 boundary, TLS, Basic auth, and safe errors.
 - `common.py`: shared argument types, tool annotations, and payload helpers.
-- `tools.py`: read tools, opt-in creation, bounded arguments, and response validation.
-- `workflows.py`: issue transitions, issue links, and remote web links with explicit write annotations.
+- `fields.py`: field catalog models and the lifespan catalog cache.
+- `create_metadata.py`: create-metadata models and pure checks for planned issue fields.
 - `text.py`: plain text to ADF and best-effort extraction with optional raw recovery.
+- `tools/`: one module per area (`users`, `issues`, `fields`, `create`, `transitions`, `links`).
+  Every `@mcp.tool` lives here, and `tools/__init__.py` imports each module so it registers.
+
+## Adding a tool ✅
+
+- Put it in the matching `tools/<area>.py`. For a new area, add a module and import it in `tools/__init__.py`.
+- Tool modules must not import each other. Move a shared helper to `common.py` only when a second module needs it.
 
 ## Development rules 🧪
 

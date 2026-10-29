@@ -11,10 +11,22 @@ Issue = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*|[1-
 IssueId = Annotated[str, Field(pattern=r"^[1-9][0-9]*$", max_length=255)]
 Offset = Annotated[int, Field(ge=0)]
 PageSize = Annotated[int, Field(ge=1, le=100)]
+NonemptyString = Annotated[str, Field(min_length=1)]
 
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 CREATE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}
 WRITE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}
+WRITE_OUTCOME_UNKNOWN = "The write outcome may be unknown; inspect the issue or links before retrying."
+
+
+class IssuePayload(BaseModel):
+    """Validate the small portion of an issue response used by this server."""
+
+    id: str
+    key: str
+    fields: dict[str, Any]
+    names: dict[str, str] = Field(default_factory=dict)
+    field_schema: dict[str, Any] = Field(default_factory=dict, alias="schema")
 
 
 def validate_payload[T: BaseModel](model: type[T], data: Any) -> T:

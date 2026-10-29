@@ -126,6 +126,10 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.flake8-type-checking]
+# Pydantic evaluates model annotations at runtime, so their imports must stay eager.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
 [tool.ruff.lint.per-file-ignores]
 # Pytest tests use assertions to check behavior.
 "tests/**" = [
