@@ -7,6 +7,7 @@ import pytest
 from fastmcp import Client
 
 from jira_mcp import mcp
+from jira_mcp.common import WRITE_OUTCOME_UNKNOWN
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
@@ -309,9 +310,8 @@ async def test_remote_write_errors_are_safe_and_not_retried(mock_jira, response)
 
     assert result.is_error
     assert "test-secret" not in result.content[0].text
-    assert "outcome may be unknown" in result.content[0].text
-    assert "inspect" in result.content[0].text.lower()
-    assert "retry" in result.content[0].text.lower()
+    assert result.content[0].text.endswith(f". {WRITE_OUTCOME_UNKNOWN}")
+    assert ".." not in result.content[0].text
     assert [request.method for request in requests] == ["GET", "POST"]
 
 
@@ -374,9 +374,8 @@ async def test_bodyless_write_errors_are_safe_and_not_retried(mock_jira, tool, a
 
     assert result.is_error
     assert "test-secret" not in result.content[0].text
-    assert "outcome may be unknown" in result.content[0].text
-    assert "inspect" in result.content[0].text.lower()
-    assert "retry" in result.content[0].text.lower()
+    assert result.content[0].text.endswith(f". {WRITE_OUTCOME_UNKNOWN}")
+    assert ".." not in result.content[0].text
     assert len(requests) == 1
     assert requests[0].method == "POST"
 

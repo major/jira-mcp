@@ -107,7 +107,7 @@ async def create_issue_link(
     try:
         await client.post("issueLink", body, expect_json=False)
     except ToolError as exc:
-        message = f"{exc} {WRITE_OUTCOME_UNKNOWN}"
+        message = f"{str(exc).rstrip('.')}. {WRITE_OUTCOME_UNKNOWN}"
         raise ToolError(message) from None
     return {"success": True}
 
@@ -163,6 +163,6 @@ async def create_issue_remote_link(issue: Issue, url: RemoteUrl, title: RemoteTi
         data = await client.post(f"issue/{issue}/remotelink", {"object": {"url": url, "title": title}})
         created = validate_payload(CreatedRemoteLink, data)
     except ToolError as exc:
-        message = f"{exc} {WRITE_OUTCOME_UNKNOWN}"
+        message = f"{str(exc).rstrip('.')}. {WRITE_OUTCOME_UNKNOWN}"
         raise ToolError(message) from None
     return {"created": True, "id": created.id}
