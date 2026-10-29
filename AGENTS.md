@@ -17,6 +17,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - `app.py`: FastMCP server, pooled client lifespan, and configuration errors.
 - `config.py`: Cloud URL validation and environment-based API token credentials.
 - `client.py`: async HTTPX2 boundary, TLS, Basic auth, and safe errors.
+- `common.py`: shared argument types, tool annotations, and payload helpers.
 - `tools.py`: read tools, opt-in creation, bounded arguments, and response validation.
 - `workflows.py`: issue transitions, issue links, and remote web links with explicit write annotations.
 - `text.py`: plain text to ADF and best-effort extraction with optional raw recovery.

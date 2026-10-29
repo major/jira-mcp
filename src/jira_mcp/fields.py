@@ -7,9 +7,9 @@ from typing import Any
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field, RootModel, ValidationError
 
+from jira_mcp.common import INVALID_PAYLOAD
 lazy from jira_mcp.client import JiraClient
 
-INVALID_PAYLOAD = "Jira returned an unexpected response shape. Check the Jira Cloud URL and API access."
 CATALOG_TTL = 300
 
 

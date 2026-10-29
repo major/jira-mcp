@@ -9,15 +9,23 @@ from pydantic import BaseModel, Field, RootModel, StrictBool, ValidationError, m
 
 from jira_mcp.app import get_client, get_field_catalog, mcp
 from jira_mcp.client import JiraClient, JiraHTTPError
-from jira_mcp.fields import INVALID_PAYLOAD, FieldDefinition
+from jira_mcp.common import (
+    CREATE,
+    INVALID_PAYLOAD,
+    READ_ONLY,
+    Issue,
+    IssueId,
+    Offset,
+    PageSize,
+    id_or_key,
+    next_offset,
+    validate_payload,
+)
+from jira_mcp.fields import FieldDefinition
 from jira_mcp.text import plain_text_to_adf, render_text
 
-Issue = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*|[1-9][0-9]*)$", max_length=255)]
-IssueId = Annotated[str, Field(pattern=r"^[1-9][0-9]*$", max_length=255)]
 Project = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*|[1-9][0-9]*)$", max_length=255)]
 IssueSelection = Annotated[list[Issue], Field(min_length=1, max_length=20)]
-Offset = Annotated[int, Field(ge=0)]
-PageSize = Annotated[int, Field(ge=1, le=100)]
 USER_SEARCH_LIMIT = 1000
 UserOffset = Annotated[int, Field(ge=0, le=USER_SEARCH_LIMIT - 1)]
 UserQuery = Annotated[str, Field(min_length=1, max_length=255, pattern=r"\S")]
@@ -36,8 +44,6 @@ AccountId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^\S+$")
 CanonicalIssueKey = Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]*-[1-9][0-9]*$", max_length=255)]
 
 DEFAULT_FIELDS = "summary,status,issuetype,priority,assignee,reporter,labels,created,updated,description"
-READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
-CREATE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True}
 RESERVED_CREATE_FIELDS = frozenset(
     {"project", "issuetype", "summary", "description", "labels", "priority", "assignee", "parent"}
 )
@@ -193,20 +199,6 @@ class UserPayload(BaseModel):
 
 class UserSearchPayload(RootModel[list[UserPayload]]):
     """Validate the user search array, which has no total or pagination envelope."""
-
-
-def validate_payload[T: BaseModel](model: type[T], data: Any) -> T:
-    """Turn malformed upstream data into a safe, actionable tool error."""
-    try:
-        return model.model_validate(data)
-    except ValidationError:
-        raise ToolError(INVALID_PAYLOAD) from None
-
-
-def next_offset(start: int, count: int, total: int) -> int | None:
-    """Stop on empty pages even if Jira's mutable total still advertises results."""
-    end = start + count
-    return end if count and end < total else None
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -471,11 +463,6 @@ async def list_create_fields(
         "total": page.total,
         "next_start_at": next_offset(page.start_at, len(page.fields), page.total),
     }
-
-
-def id_or_key(value: str) -> dict[str, str]:
-    """Reference a Jira project or issue by numeric ID or by key."""
-    return {"id" if value.isdigit() else "key": value}
 
 
 async def fetch_create_fields(client: JiraClient, project: str, issue_type_id: str) -> list[CreateField]:
