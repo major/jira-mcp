@@ -377,8 +377,8 @@ Each issue has the same field, metadata, and description envelopes as
 description limit per issue. `fields` replaces the default selection, while
 `key` is always requested for identity. Use `include_raw_adf` and `text_limit`
 when needed, or retrieve a matching ticket with `get_issue` for more detail.
-Custom field values remain unchanged. Metadata names and schemas are keyed by
-field ID, not potentially duplicated names.
+Field values are cleaned the same way as `get_issue`. Metadata names and schemas
+are keyed by field ID, not potentially duplicated names.
 
 Search uses Jira Cloud's enhanced
 [`POST /rest/api/3/search/jql`](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post)
@@ -393,8 +393,14 @@ create or change tickets. It does not use the retired legacy search endpoint.
 
 `get_issue` requests `summary`, `status`, `issuetype`, `priority`, `assignee`,
 `reporter`, `labels`, `created`, `updated`, and `description`. Responses include
-the canonical Jira key, raw JSON field values, and `field_metadata` keyed by ID.
+the canonical Jira key, JSON field values, and `field_metadata` keyed by ID.
 Description is moved out of `fields` into a separate text envelope.
+
+**Field values skip REST and UI noise.** The `self`, `iconUrl`, `avatarUrls`, and
+`colorName` keys are removed at any depth, so a status keeps its `id`, `name`,
+and `statusCategory` key and name. IDs, keys, account IDs, and explicit `null`
+values stay. Pass `include_raw_fields: true` to `get_issue`, `get_issues`, or
+`search_issues` to get Jira's original field JSON unchanged.
 
 **Returned fields are self-describing.** Every `get_issue` request asks Jira for
 names and schemas alongside values. Use the returned `field_metadata` to interpret

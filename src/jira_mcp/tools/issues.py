@@ -41,6 +41,10 @@ PageToken = Annotated[str, Field(min_length=1, max_length=4096, pattern=r"\S")]
 DEFAULT_FIELDS = "summary,status,issuetype,priority,assignee,reporter,labels,created,updated,description"
 
 
+# REST links and UI hints that agents do not use. IDs, keys, and names stay for decisions and JQL.
+NOISE_KEYS = frozenset({"self", "iconUrl", "avatarUrls", "colorName"})
+
+
 class BulkIssueError(BaseModel):
     """Keep only a safe Jira ID and ignore the untrusted upstream message."""
 
@@ -92,36 +96,46 @@ class CommentPage(BaseModel):
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_issue(
+async def get_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-contained.
     issue: Issue,
     ctx: Context,
+    *,
     fields: FieldSelection | None = None,
     include_raw_adf: bool = False,
     text_limit: TextLimit = 12_000,
+    include_raw_fields: bool = False,
 ) -> dict[str, Any]:
     """Get one ticket by key or numeric ID, including its description by default.
 
     Explicit fields replace defaults. Request ['*all'] only when the full potentially
     large field set is needed. Use returned field_metadata instead of extra lookups;
     list_fields can discover IDs before requesting values.
-    Field values remain original JSON, except description is returned separately
-    as text with character count and truncation status. Request raw ADF to retain
-    rich content. Metadata maps returned field IDs to their names and schemas.
+    Field values are Jira JSON without self, iconUrl, avatarUrls, or colorName keys
+    at any depth; set include_raw_fields to keep them. Description is returned
+    separately as text with character count and truncation status. Request raw ADF
+    to retain rich content. Metadata maps returned field IDs to their names and schemas.
     """
     data = await get_client(ctx).get(
         f"issue/{issue}",
         params={"fields": ",".join(fields) if fields is not None else DEFAULT_FIELDS, "expand": "names,schema"},
     )
-    return render_issue(validate_payload(IssuePayload, data), text_limit=text_limit, include_raw_adf=include_raw_adf)
+    return render_issue(
+        validate_payload(IssuePayload, data),
+        text_limit=text_limit,
+        include_raw_adf=include_raw_adf,
+        include_raw_fields=include_raw_fields,
+    )
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_issues(
+async def get_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-contained.
     issues: IssueSelection,
     ctx: Context,
+    *,
     fields: FieldSelection | None = None,
     include_raw_adf: bool = False,
     text_limit: TextLimit = 12_000,
+    include_raw_fields: bool = False,
 ) -> dict[str, Any]:
     """Fetch 1 to 20 Jira tickets by key or numeric ID in one read-only request.
 
@@ -144,15 +158,32 @@ async def get_issues(
     payload = validate_payload(BulkIssuePayload, await get_client(ctx).post("issue/bulkfetch", body))
     return {
         "issues": [
-            render_issue(issue, text_limit=text_limit, include_raw_adf=include_raw_adf) for issue in payload.issues
+            render_issue(
+                issue,
+                text_limit=text_limit,
+                include_raw_adf=include_raw_adf,
+                include_raw_fields=include_raw_fields,
+            )
+            for issue in payload.issues
         ],
         "errors": [{"id": error.id, "message": "Jira could not return this issue."} for error in payload.issue_errors],
         "omissions_possible": True,
     }
 
 
-def render_issue(payload: IssuePayload, *, text_limit: int, include_raw_adf: bool) -> dict[str, Any]:
-    """Render selected fields without losing description metadata or original values."""
+def strip_noise(value: Any) -> Any:
+    """Drop REST link and UI keys at any depth while keeping nulls and all other values."""
+    if isinstance(value, dict):
+        return {key: strip_noise(item) for key, item in value.items() if key not in NOISE_KEYS}
+    if isinstance(value, list):
+        return [strip_noise(item) for item in value]
+    return value
+
+
+def render_issue(
+    payload: IssuePayload, *, text_limit: int, include_raw_adf: bool, include_raw_fields: bool
+) -> dict[str, Any]:
+    """Render selected fields without losing description metadata, nulls, or field IDs."""
     values = payload.fields.copy()
     metadata = {
         field_id: {
@@ -165,6 +196,8 @@ def render_issue(payload: IssuePayload, *, text_limit: int, include_raw_adf: boo
     result = {"id": payload.id, "key": payload.key, "fields": values, "field_metadata": metadata}
     if "description" in values:
         result["description"] = render_text(values.pop("description"), limit=text_limit, include_raw=include_raw_adf)
+    if not include_raw_fields:
+        result["fields"] = {field_id: strip_noise(value) for field_id, value in values.items()}
     return result
 
 
@@ -178,6 +211,7 @@ async def search_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls se
     fields: FieldSelection | None = None,
     include_raw_adf: bool = False,
     text_limit: TextLimit = 2_000,
+    include_raw_fields: bool = False,
 ) -> dict[str, Any]:
     """Search ticket titles, descriptions, and metadata using bounded Jira JQL.
 
@@ -192,7 +226,8 @@ async def search_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls se
     the same JQL and options until null, even after short or empty pages. Search
     only includes visible tickets and recent changes can lag behind the index.
     Fields replace defaults, but key is always requested for identity. Responses
-    use get_issue's field and description format; text_limit applies per issue.
+    use get_issue's field and description format, including the raw field
+    opt-in; text_limit applies per issue.
     The enhanced search POST only reads data and avoids URL-length limits.
     """
     selected = list(fields) if fields is not None else DEFAULT_FIELDS.split(",")
@@ -211,6 +246,7 @@ async def search_issues(  # noqa: PLR0913 - Explicit arguments keep MCP calls se
                 issue.model_copy(update={"names": page.names, "field_schema": page.field_schema}),
                 text_limit=text_limit,
                 include_raw_adf=include_raw_adf,
+                include_raw_fields=include_raw_fields,
             )
             for issue in page.issues
         ],
