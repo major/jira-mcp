@@ -200,6 +200,27 @@ def test_server_instructions_explain_field_discovery():
     assert "before retrying" in instructions
 
 
+async def test_unexpected_errors_are_masked(mock_jira, monkeypatch):
+    """Hide unexpected exception text while keeping the call an error result."""
+    # Arrange
+    _requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"accountId": "a", "displayName": "Reader"}))
+
+    def explode(*_args, **_kwargs):
+        """Fail the way an unforeseen bug would, with sensitive text in the message."""
+        msg = "test-secret leaked"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("jira_mcp.tools.users.validate_payload", explode)
+
+    # Act
+    result = await invoke("get_current_user")
+
+    # Assert
+    assert result.is_error
+    assert result.content[0].text == "Error calling tool 'get_current_user'"
+
+
 def test_stdio_entrypoint(monkeypatch):
     """Launch the same registered server from the console entry point."""
     calls = []
