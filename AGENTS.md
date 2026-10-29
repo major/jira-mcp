@@ -28,6 +28,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 
 - Put it in the matching `tools/<area>.py`. For a new area, add a module and import it in `tools/__init__.py`.
 - Tool modules must not import each other. Move a shared helper to `common.py` only when a second module needs it.
+- Test it in the matching `tests/test_<area>.py`. Keep cross-tool checks in `tests/test_server.py`.
 
 ## Development rules 🧪
 
