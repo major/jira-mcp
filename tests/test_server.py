@@ -124,7 +124,7 @@ async def test_discovery_without_credentials(monkeypatch):
     schemas = {tool.name: tool.model_dump(by_alias=True)["inputSchema"] for tool in tools}
     issue_description = next(tool.description for tool in tools if tool.name == "get_issue")
     assert issue_description is not None
-    assert "field_metadata instead of extra lookups" in issue_description
+    assert "Set include_field_metadata to add field_metadata" in issue_description
     assert all("ctx" not in schema["properties"] for schema in schemas.values())
     assert schemas["get_issue"]["required"] == ["issue"]
     assert schemas["get_issue"]["properties"]["fields"]["anyOf"][0]["minItems"] == 1

@@ -184,7 +184,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | --- | --- |
 | `create_issue` | Validate and create one issue, or preview it with `validate_only`. **Writes.** |
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
-| `get_issue` | Read ticket fields, description, and field metadata. |
+| `get_issue` | Read ticket fields, description, and optional field metadata. |
 | `get_issue_comments` | Read one oldest-first page of ticket comments. |
 | `get_issues` | Fetch 1 through 20 known tickets in one request. |
 | `list_create_fields` | Discover create-field metadata for one project and issue type. |
@@ -372,13 +372,13 @@ Each call makes one request; there is no hidden page-fetch loop. Page sizes rang
 from 1 through 100, but Jira can return fewer results. Only visible tickets are
 returned, and recently changed tickets can lag behind Jira's search index.
 
-Each issue has the same field, metadata, and description envelopes as
-`get_issue`. Defaults use the same system fields, with a shorter 2,000-character
+Each issue has the same field and description envelopes as `get_issue`. Defaults use the same system fields, with a shorter 2,000-character
 description limit per issue. `fields` replaces the default selection, while
 `key` is always requested for identity. Use `include_raw_adf` and `text_limit`
 when needed, or retrieve a matching ticket with `get_issue` for more detail.
-Field values are cleaned the same way as `get_issue`. Metadata names and schemas
-are keyed by field ID, not potentially duplicated names.
+Field values are cleaned the same way as `get_issue`. With
+`include_field_metadata: true`, one top-level `field_metadata` map covers the
+whole page, keyed by field ID, not potentially duplicated names.
 
 Search uses Jira Cloud's enhanced
 [`POST /rest/api/3/search/jql`](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/#api-rest-api-3-search-jql-post)
@@ -393,7 +393,7 @@ create or change tickets. It does not use the retired legacy search endpoint.
 
 `get_issue` requests `summary`, `status`, `issuetype`, `priority`, `assignee`,
 `reporter`, `labels`, `created`, `updated`, and `description`. Responses include
-the canonical Jira key, JSON field values, and `field_metadata` keyed by ID.
+the canonical Jira key and JSON field values.
 Description is moved out of `fields` into a separate text envelope.
 
 **Field values skip REST and UI noise.** The `self`, `iconUrl`, `avatarUrls`, and
@@ -402,10 +402,12 @@ and `statusCategory` key and name. IDs, keys, account IDs, and explicit `null`
 values stay. Pass `include_raw_fields: true` to `get_issue`, `get_issues`, or
 `search_issues` to get Jira's original field JSON unchanged.
 
-**Returned fields are self-describing.** Every `get_issue` request asks Jira for
-names and schemas alongside values. Use the returned `field_metadata` to interpret
-custom fields rather than making a separate lookup for each one. Metadata is
-included when Jira supplies it; missing metadata is not invented. For example:
+**Field metadata is opt-in.** Set `include_field_metadata: true` on `get_issue`,
+`get_issues`, or `search_issues` to ask Jira for names and schemas in the same
+request. The response then has one top-level `field_metadata` map, not one per
+issue, so use it to interpret custom fields rather than making a separate lookup
+for each one. `description` is left out because it has its own envelope. Metadata
+is included when Jira supplies it; missing metadata is not invented. For example:
 
 ```json
 {
@@ -451,7 +453,9 @@ deduplicated locally. Split larger sets into explicit batches.
 
 The response contains:
 
-- `issues`: tickets in the same field, metadata, and description format as
+- `field_metadata`: only with `include_field_metadata: true`, one merged map for
+  all returned issues.
+- `issues`: tickets in the same field and description format as
   `get_issue`. Jira returns canonical IDs and keys, sorted by issue ID rather
   than input order. Old or differently cased keys can resolve to current keys.
 - `errors`: issue IDs that Jira reports as fetch errors, with the fixed message
