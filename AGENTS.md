@@ -15,6 +15,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 
 - `src/jira_mcp/__init__.py`: imports tools for registration and provides `main()`.
 - `app.py`: FastMCP server, pooled client lifespan, and configuration errors.
+- `instructions.py`: agent-facing server instructions, including each tool's main arguments.
 - `config.py`: Cloud URL validation and environment-based API token credentials.
 - `client.py`: async HTTPX2 boundary, TLS, Basic auth, and safe errors.
 - `common.py`: shared argument types, tool annotations, and payload helpers.
@@ -41,7 +42,8 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - `tests/test_tool_inventory.py` checks that registered tools, annotations, README rows, and instruction arguments agree.
 - Keep field IDs and original custom-field values. Names are not unique.
 - Preserve pagination, truncation indicators, and optional unchanged ADF.
-- Never expose token values, upstream error bodies, or transport exception text.
+- Never expose token values, upstream error bodies, or transport exception text. `mask_error_details=True` hides
+  unexpected exception text, but `ToolError` messages always reach the caller.
 - Gate creation on the lifespan's issue-creation setting, never retry it automatically,
   and warn about uncertain outcomes before a caller considers a retry.
 - Keep the README tool table and server instructions aligned with public tools.
