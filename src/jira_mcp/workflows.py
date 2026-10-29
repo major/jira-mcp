@@ -9,9 +9,8 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from jira_mcp.app import get_client, mcp
-from jira_mcp.tools import READ_ONLY, Issue, IssueId, id_or_key, validate_payload
+from jira_mcp.common import READ_ONLY, WRITE, Issue, IssueId, id_or_key, validate_payload
 
-WRITE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}
 WRITE_OUTCOME_UNKNOWN = "The write outcome may be unknown; inspect the issue or links before retrying."
 NonemptyString = Annotated[str, Field(min_length=1)]
 PositiveInt = Annotated[int, Field(strict=True, ge=1)]
