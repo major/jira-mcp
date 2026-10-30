@@ -1,5 +1,7 @@
 """Check Cloud-only configuration without exposing credentials."""
 
+import json
+
 import pytest
 
 from jira_mcp.config import ConfigError, Settings
@@ -8,7 +10,15 @@ from jira_mcp.config import ConfigError, Settings
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
     """Isolate configuration tests from the invoking shell."""
-    for name in ("JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_TIMEOUT", "JIRA_ENABLE_ISSUE_CREATION"):
+    for name in (
+        "JIRA_URL",
+        "JIRA_EMAIL",
+        "JIRA_API_TOKEN",
+        "JIRA_TIMEOUT",
+        "JIRA_ENABLE_ISSUE_CREATION",
+        "JIRA_ATTACHMENT_DIRECTORIES",
+        "JIRA_ATTACHMENT_MAX_BYTES",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -23,6 +33,8 @@ def test_defaults_and_secret_repr(monkeypatch):
     assert settings.url == "https://example.atlassian.net"
     assert settings.timeout == float("30")
     assert settings.enable_issue_creation is False
+    assert settings.attachment_directories == ()
+    assert settings.attachment_max_bytes == 10 * 1024 * 1024
     assert "hidden-secret" not in repr(settings)
 
 
@@ -99,3 +111,39 @@ def test_missing_settings():
     """Name required variables without leaking their values."""
     with pytest.raises(ConfigError, match=r"JIRA_URL.*JIRA_EMAIL.*JIRA_API_TOKEN"):
         Settings.from_env()
+
+
+def test_attachment_settings(cloud_env, monkeypatch, tmp_path):
+    """Load explicit roots and the per-file limit without requiring roots to exist."""
+    roots = [str(tmp_path / "missing"), str(tmp_path / "other")]
+    monkeypatch.setenv("JIRA_ATTACHMENT_DIRECTORIES", json.dumps(roots))
+    monkeypatch.setenv("JIRA_ATTACHMENT_MAX_BYTES", "1")
+    settings = Settings.from_env()
+    assert settings.attachment_directories == tuple(roots)
+    assert settings.attachment_max_bytes == 1
+
+
+@pytest.mark.parametrize(
+    "value", ["test-secret", "{}", "[1]", '[""]', '["relative"]', '["/"]', '["/x/../test-secret"]']
+)
+def test_invalid_attachment_roots_are_safe(cloud_env, monkeypatch, value):
+    """Reject unsafe root configuration without echoing its contents."""
+    monkeypatch.setenv("JIRA_ATTACHMENT_DIRECTORIES", value)
+    with pytest.raises(ConfigError, match="JIRA_ATTACHMENT_DIRECTORIES") as error:
+        Settings.from_env()
+    assert "test-secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "104857601", "test-secret", "1.5"])
+def test_invalid_attachment_limit_is_safe(cloud_env, monkeypatch, value):
+    """Reject invalid size limits without leaking configured values."""
+    monkeypatch.setenv("JIRA_ATTACHMENT_MAX_BYTES", value)
+    with pytest.raises(ConfigError, match="JIRA_ATTACHMENT_MAX_BYTES") as error:
+        Settings.from_env()
+    assert "test-secret" not in str(error.value)
+
+
+def test_attachment_limit_upper_bound(cloud_env, monkeypatch):
+    """Accept the maximum configured per-file limit."""
+    monkeypatch.setenv("JIRA_ATTACHMENT_MAX_BYTES", "104857600")
+    assert Settings.from_env().attachment_max_bytes == 100 * 1024 * 1024
