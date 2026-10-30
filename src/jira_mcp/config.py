@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
@@ -22,6 +23,8 @@ class Settings:
     token: str = field(repr=False)
     timeout: float = 30.0
     enable_issue_creation: bool = False
+    attachment_directories: tuple[str, ...] = ()
+    attachment_max_bytes: int = 10_485_760
 
     @property
     def browse_base(self) -> str | None:
@@ -53,12 +56,37 @@ class Settings:
             msg = "JIRA_ENABLE_ISSUE_CREATION must be true or false"
             raise ConfigError(msg)
 
+        try:
+            roots = json.loads(os.environ.get("JIRA_ATTACHMENT_DIRECTORIES", "[]"))
+            if not isinstance(roots, list) or any(
+                not isinstance(root, str)
+                or not root.startswith("/")
+                or "\x00" in root
+                or ".." in root.split("/")
+                or not os.path.normpath(root).strip("/")
+                for root in roots
+            ):
+                raise ValueError  # noqa: TRY301 - Share the safe configuration error below.
+        except ValueError, TypeError:
+            msg = "JIRA_ATTACHMENT_DIRECTORIES must be a JSON array of absolute directories"
+            raise ConfigError(msg) from None
+
+        try:
+            limit = int(os.environ.get("JIRA_ATTACHMENT_MAX_BYTES", "10485760"))
+            if not 0 < limit <= 104_857_600:  # noqa: PLR2004 - Maximum configurable per-file size is 100 MiB.
+                raise ValueError  # noqa: TRY301 - Share the safe configuration error below.
+        except ValueError:
+            msg = "JIRA_ATTACHMENT_MAX_BYTES must be a positive integer at most 104857600"
+            raise ConfigError(msg) from None
+
         return cls(
             url=url,
             email=values["JIRA_EMAIL"].strip(),
             token=values["JIRA_API_TOKEN"],
             timeout=timeout,
             enable_issue_creation=creation == "true",
+            attachment_directories=tuple(roots),
+            attachment_max_bytes=limit,
         )
 
 

@@ -14,6 +14,8 @@ def jira_env(monkeypatch):
     monkeypatch.setenv("JIRA_API_TOKEN", "test-secret")
     monkeypatch.delenv("JIRA_TIMEOUT", raising=False)
     monkeypatch.delenv("JIRA_ENABLE_ISSUE_CREATION", raising=False)
+    monkeypatch.delenv("JIRA_ATTACHMENT_DIRECTORIES", raising=False)
+    monkeypatch.delenv("JIRA_ATTACHMENT_MAX_BYTES", raising=False)
 
 
 @pytest.fixture

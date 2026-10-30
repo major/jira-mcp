@@ -7,6 +7,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.lifespan import lifespan
 
+from jira_mcp.attachment_files import AttachmentStorage
 from jira_mcp.client import JiraClient
 from jira_mcp.config import ConfigError, Settings
 from jira_mcp.fields import FieldCatalogCache
@@ -28,6 +29,7 @@ async def jira_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             "field_catalog": FieldCatalogCache(client),
             "enable_issue_creation": settings.enable_issue_creation,
             "browse_base": settings.browse_base,
+            "attachment_storage": AttachmentStorage(settings.attachment_directories, settings.attachment_max_bytes),
         }
     finally:
         await client.aclose()

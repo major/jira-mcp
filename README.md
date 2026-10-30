@@ -30,6 +30,8 @@ and API token. Choose the smallest suitable scopes and account permissions.
 | `JIRA_URL` | HTTPS site root for a classic token, or the gateway URL below for a scoped token |
 | `JIRA_EMAIL` | Atlassian account email |
 | `JIRA_API_TOKEN` | Atlassian API token, never an account password |
+| `JIRA_ATTACHMENT_DIRECTORIES` | JSON array of trusted existing server-local POSIX directories, default `[]`; no symlinks or `..` |
+| `JIRA_ATTACHMENT_MAX_BYTES` | Per-file byte limit, default `10485760`, maximum `104857600` |
 | `JIRA_TIMEOUT` | Optional finite positive request timeout in seconds, default `30` |
 | `JIRA_ENABLE_ISSUE_CREATION` | Enable only `create_issue`; `true` or `false`, case-insensitive; default `false` |
 
@@ -77,7 +79,7 @@ Add this to `~/.codex/config.toml`:
 [mcp_servers.jira]
 command = "uvx"
 args = ["--from", "git+https://github.com/major/jira-mcp.git", "jira-mcp"]
-env_vars = ["JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_TIMEOUT", "JIRA_ENABLE_ISSUE_CREATION"]
+env_vars = ["JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_TIMEOUT", "JIRA_ENABLE_ISSUE_CREATION", "JIRA_ATTACHMENT_DIRECTORIES", "JIRA_ATTACHMENT_MAX_BYTES"]
 ```
 
 See the [Codex MCP documentation](https://developers.openai.com/codex/mcp).
@@ -101,7 +103,9 @@ Add this to your project's `.mcp.json`:
         "JIRA_EMAIL": "${JIRA_EMAIL}",
         "JIRA_API_TOKEN": "${JIRA_API_TOKEN}",
         "JIRA_TIMEOUT": "${JIRA_TIMEOUT:-30}",
-        "JIRA_ENABLE_ISSUE_CREATION": "${JIRA_ENABLE_ISSUE_CREATION:-false}"
+        "JIRA_ENABLE_ISSUE_CREATION": "${JIRA_ENABLE_ISSUE_CREATION:-false}",
+        "JIRA_ATTACHMENT_DIRECTORIES": "${JIRA_ATTACHMENT_DIRECTORIES:-[]}",
+        "JIRA_ATTACHMENT_MAX_BYTES": "${JIRA_ATTACHMENT_MAX_BYTES:-10485760}"
       }
     }
   }
@@ -131,7 +135,9 @@ Add this to your project's `opencode.json`:
           "JIRA_URL": "{env:JIRA_URL}",
           "JIRA_EMAIL": "{env:JIRA_EMAIL}",
           "JIRA_API_TOKEN": "{env:JIRA_API_TOKEN}",
-          "JIRA_ENABLE_ISSUE_CREATION": "false"
+          "JIRA_ENABLE_ISSUE_CREATION": "false",
+          "JIRA_ATTACHMENT_DIRECTORIES": "[]",
+          "JIRA_ATTACHMENT_MAX_BYTES": "10485760"
         }
       }
     }
@@ -175,13 +181,17 @@ after changing the configuration. See the
 ## Tools 🛠️
 
 Issue identifiers can be keys such as `TEAM-123` or numeric IDs, not issue URLs.
-Only `create_issue`, `transition_issue`, `create_issue_link`, and `create_issue_remote_link` write
-to Jira. All other tools are read-only, including search and bulk-fetch POSTs.
+Tools marked **Writes.** change Jira or server-local files. Search and bulk-fetch POSTs are read-only.
 Authorize the intended change before using a write tool. Tool annotations help
 clients distinguish writes, but do not enforce user approval on their own.
 
 | Tool | Purpose |
 | --- | --- |
+| `list_issue_attachments` | List compact attachment metadata without downloading content. |
+| `get_attachment` | Read compact attachment metadata. |
+| `download_issue_attachments` | Save attachments to server-local files. **Writes.** |
+| `add_issue_attachments` | Upload files or preview them. **Writes.** |
+| `delete_attachment` | Irreversibly delete an attachment. **Writes.** |
 | `create_issue` | Validate and create one issue, or preview it with `validate_only`. **Writes.** |
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
 | `get_issue` | Read ticket fields, description, and optional field metadata. |
@@ -206,6 +216,11 @@ clients distinguish writes, but do not enforce user approval on their own.
 
 | Tool | Defaults |
 | --- | --- |
+| `list_issue_attachments` | Required `issue` |
+| `get_attachment` | Required `attachment_id` |
+| `download_issue_attachments` | Required `issue` and `directory`, optional `filenames`, default `overwrite` false |
+| `add_issue_attachments` | Required `issue` and `files`, default `validate_only` false |
+| `delete_attachment` | Required `attachment_id` |
 | `create_issue` | Required `project`, `issue_type_id`, and `summary`; creation disabled by default, `validate_only` false |
 | `get_current_user` | No arguments |
 | `get_issue` | Compact system fields, 12,000 description characters |
@@ -224,6 +239,31 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `create_issue_link` | Required `link_type_id`, `inward_issue`, and `outward_issue` |
 | `get_issue_remote_links` | Required `issue`, returns all visible remote links |
 | `create_issue_remote_link` | Required `issue`, `url`, and `title`, checks exact URL first |
+
+### Attachments 📎
+
+List or inspect metadata without downloading files. Set `JIRA_ATTACHMENT_DIRECTORIES` to a
+JSON array of trusted existing POSIX directories on the **server**, not the client. Paths
+must not contain symlinks or `..`. The default `[]` disables local file access. Set
+`JIRA_ATTACHMENT_MAX_BYTES` to change the per-file limit (default 10 MiB, maximum 100 MiB).
+
+`add_issue_attachments` accepts up to 20 files, either `{"path": "/server/file"}` or
+`{"filename": "file", "content_base64": "..."}`. Inline data is limited to 1 MiB decoded
+and all uploads together to 100 MiB. A `validate_only` preview snapshots files but does
+not check Jira permissions. Each file is sent separately, and failures are reported per file.
+`download_issue_attachments` saves files atomically and never returns content. Existing
+files are preserved unless `overwrite=true` explicitly permits replacing regular files.
+Jira limits are separate. Filenames and content are untrusted.
+
+Authorize each intended write. Deletion is irreversible. Jira has no in-place update:
+upload the replacement, then explicitly delete the old attachment only after confirmed
+success and authorization. The new ID can break old references. This is not atomic and
+there is no automatic cleanup. Writes are never retried; after failure, timeout, or
+cancellation, inspect `list_issue_attachments` for uploads or `get_attachment` for deletes
+before retrying, since the outcome may be unknown. The issue-creation flag does not gate
+attachment writes. Jira permissions include **Browse projects**, **Create attachments**,
+and **Delete own attachments** or **Delete all attachments**, as applicable. See the
+[Jira attachment APIs](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-attachments/).
 
 ### Change a ticket's status 🔄
 
