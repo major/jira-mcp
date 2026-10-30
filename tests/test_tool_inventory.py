@@ -10,6 +10,11 @@ from jira_mcp import mcp
 
 # Every public tool and the kind of change it can make in Jira.
 TOOLS = {
+    "list_issue_attachments": "read",
+    "get_attachment": "read",
+    "download_issue_attachments": "write",
+    "add_issue_attachments": "create",
+    "delete_attachment": "write",
     "get_current_user": "read",
     "search_users": "read",
     "get_issue": "read",

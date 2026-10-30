@@ -124,7 +124,7 @@ def test_attachment_settings(cloud_env, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "value", ["test-secret", "{}", "[1]", '[""]', '["relative"]', '["/"]', '["/x/../test-secret"]']
+    "value", ["test-secret", "{}", "[1]", '[""]', '["relative"]', '["/"]', '["//"]', '["//."]', '["/x/../test-secret"]']
 )
 def test_invalid_attachment_roots_are_safe(cloud_env, monkeypatch, value):
     """Reject unsafe root configuration without echoing its contents."""

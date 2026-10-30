@@ -107,7 +107,10 @@ async def test_get_attachment_compacts_metadata(mock_jira):
     assert requests[0].url.path == "/rest/api/3/attachment/12"
 
 
-@pytest.mark.parametrize("metadata", [{**META, "id": 0}, {**META, "filename": 1}, {**META, "size": -1}])
+@pytest.mark.parametrize(
+    "metadata",
+    [{**META, "id": 0}, {**META, "id": True}, {**META, "id": 12.0}, {**META, "filename": 1}, {**META, "size": -1}],
+)
 async def test_get_rejects_invalid_metadata(mock_jira, metadata):
     """Reject invalid required metadata returned by Jira."""
     # Arrange
@@ -405,7 +408,7 @@ async def test_download_mixed_selection_and_overwrite(mock_jira, attachment_root
     requests, responses = mock_jira
     destination = attachment_root / "note.txt"
     destination.write_bytes(b"old")
-    responses.extend([issue_response([META]), httpx2.Response(200, content=b"new")])
+    responses.extend([issue_response([META]), httpx2.Response(200, stream=ChunkStream([b"new"]))])
     result = await invoke(
         "download_issue_attachments",
         {
