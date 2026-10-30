@@ -34,8 +34,8 @@ class Attachment(BaseModel):
     filename: StrictStr
     size: Annotated[StrictInt, Field(ge=0)]
     mime_type: StrictStr | None = Field(default=None, validation_alias="mimeType")
-    created: StrictStr | None = None
-    author: "AttachmentAuthor | None" = None
+    created: StrictStr | StrictInt | None = None
+    author: AttachmentAuthor | None = None
 
     @field_validator("id", mode="before")
     @classmethod
@@ -201,6 +201,9 @@ async def download_issue_attachments(
                     raise ToolError(msg)  # noqa: TRY301
                 target.check_destination(item.filename, overwrite=overwrite)
                 content = await client.download_attachment(item.id, storage.max_bytes)
+                if len(content) != item.size:
+                    msg = "Attachment content size does not match its metadata"
+                    raise ToolError(msg)  # noqa: TRY301
                 path = target.write(item.filename, content, overwrite=overwrite)
                 downloaded.append(
                     {

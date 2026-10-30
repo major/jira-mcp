@@ -6,6 +6,7 @@ import json
 import httpx2
 import pytest
 
+from jira_mcp.tools import attachments
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
@@ -196,7 +197,7 @@ async def test_bulk_upload_validate_and_write(mock_jira, attachment_root):
     assert requests == []
     responses.extend(
         [
-            httpx2.Response(200, json=[{**META, "filename": "local.txt"}]),
+            httpx2.Response(200, json=[{**META, "filename": "local.txt", "created": 1651316514000}]),
             httpx2.Response(200, json=[{**META, "id": 13, "filename": "empty.txt", "size": 0}]),
         ]
     )
@@ -206,7 +207,7 @@ async def test_bulk_upload_validate_and_write(mock_jira, attachment_root):
         "issue": "DEMO-1",
         "validate_only": False,
         "attachments": [
-            {**META, "filename": "local.txt"},
+            {**META, "filename": "local.txt", "created": 1651316514000},
             {**META, "id": "13", "filename": "empty.txt", "size": 0},
         ],
         "failed": [],
@@ -251,6 +252,20 @@ async def test_upload_batch_bounds_and_duplicates(mock_jira, attachment_root, fi
     """Reject empty, too large, and duplicate-name batches before Jira writes."""
     requests, _ = mock_jira
     result = await invoke("add_issue_attachments", {"issue": "DEMO-1", "files": files})
+    assert result.is_error
+    assert requests == []
+
+
+async def test_upload_aggregate_limit_is_checked_before_posts(mock_jira, attachment_root, monkeypatch):
+    """Enforce the total limit without sending an earlier valid file."""
+    # Arrange
+    requests, _ = mock_jira
+    monkeypatch.setattr(attachments, "MAX_TOTAL", 1)
+
+    # Act
+    result = await invoke("add_issue_attachments", {"issue": "DEMO-1", "files": [inline("one"), inline("two")]})
+
+    # Assert
     assert result.is_error
     assert requests == []
 
@@ -309,12 +324,13 @@ async def test_upload_failure_continues_without_retry(mock_jira, attachment_root
 async def test_download_streams_and_closes(mock_jira, attachment_root, chunks):
     """Write exact-limit and empty downloads without exposing content in results."""
     requests, responses = mock_jira
+    directory = attachment_root / "nested" / "downloads"
     stream = ChunkStream(chunks)
     data = b"".join(chunks)
     responses.extend(
         [issue_response([{**META, "size": len(data), "mimeType": "text/plain"}]), httpx2.Response(200, stream=stream)]
     )
-    result = await invoke("download_issue_attachments", {"issue": "DEMO-1", "directory": str(attachment_root)})
+    result = await invoke("download_issue_attachments", {"issue": "DEMO-1", "directory": str(directory)})
     assert not result.is_error
     assert result.structured_content == {
         "issue": "DEMO-1",
@@ -322,20 +338,55 @@ async def test_download_streams_and_closes(mock_jira, attachment_root, chunks):
             {
                 "filename": "note.txt",
                 "id": "12",
-                "path": str(attachment_root / "note.txt"),
+                "path": str(directory / "note.txt"),
                 "bytes": len(data),
                 "mime_type": "text/plain",
             }
         ],
         "failed": [],
     }
-    assert (attachment_root / "note.txt").read_bytes() == data
+    assert (directory / "note.txt").read_bytes() == data
     assert stream.closed
     request = requests[1]
     assert request.url.path == "/rest/api/3/attachment/content/12"
     assert request.url.params["redirect"] == "false"
     assert request.headers["accept"] == "*/*"
     assert request.headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.parametrize("content", [b"", b"ab", b"abcd"])
+async def test_download_size_mismatch_preserves_file_and_continues(mock_jira, attachment_root, monkeypatch, content):
+    """Reject incomplete or inconsistent bodies before publication and process the next file."""
+    # Arrange
+    monkeypatch.setenv("JIRA_ATTACHMENT_MAX_BYTES", "10")
+    requests, responses = mock_jira
+    destination = attachment_root / "note.txt"
+    destination.write_bytes(b"old")
+    responses.extend(
+        [
+            issue_response([META, {**META, "id": "13", "filename": "next.txt", "size": 1}]),
+            httpx2.Response(200, stream=ChunkStream([content])),
+            httpx2.Response(200, stream=ChunkStream([b"x"])),
+        ]
+    )
+
+    # Act
+    result = await invoke(
+        "download_issue_attachments", {"issue": "DEMO-1", "directory": str(attachment_root), "overwrite": True}
+    )
+
+    # Assert
+    assert not result.is_error
+    assert destination.read_bytes() == b"old"
+    assert (attachment_root / "next.txt").read_bytes() == b"x"
+    assert [item["filename"] for item in result.structured_content["downloaded"]] == ["next.txt"]
+    assert [item["filename"] for item in result.structured_content["failed"]] == ["note.txt"]
+    assert [request.url.path for request in requests] == [
+        "/rest/api/3/issue/DEMO-1",
+        "/rest/api/3/attachment/content/12",
+        "/rest/api/3/attachment/content/13",
+    ]
+    assert sorted(path.name for path in attachment_root.iterdir()) == ["next.txt", "note.txt"]
 
 
 @pytest.mark.parametrize(

@@ -62,3 +62,15 @@ def test_overwrite_rejects_symlink(tmp_path):
     with storage.open_directory(str(tmp_path)) as directory, pytest.raises(ToolError):
         directory.write("link", b"new", overwrite=True)
     assert target.read_bytes() == b"old"
+
+
+def test_missing_root_is_not_created(tmp_path):
+    """Create download subdirectories only inside an already existing trusted root."""
+    # Arrange
+    root = tmp_path / "missing"
+    storage = AttachmentStorage((str(root),), 3)
+
+    # Act and assert
+    with pytest.raises(ToolError), storage.open_directory(str(root / "downloads")):
+        pass
+    assert not root.exists()
