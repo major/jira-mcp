@@ -138,27 +138,51 @@ async def test_create_metadata_fields_are_fresh(mock_jira):
 @pytest.mark.parametrize(
     ("filters", "expected"),
     [
-        ({"field_ids": ["alias"]}, [{"fieldId": "priority", "key": "alias", "required": False, "allowedValues": [1]}]),
-        ({"required_only": True}, [{"fieldId": "summary", "required": True}]),
-        ({"required_only": True, "field_ids": ["alias"]}, [
-            {"fieldId": "summary", "required": True},
-            {"fieldId": "priority", "key": "alias", "required": False, "allowedValues": [1]},
-        ]),
+        (
+            {"field_ids": ["alias"]},
+            [{"fieldId": "priority", "key": "alias", "name": "Priority", "required": False, "allowedValues": [1]}],
+        ),
+        ({"required_only": True}, [{"fieldId": "summary", "name": "Summary", "required": True}]),
+        (
+            {"required_only": True, "field_ids": ["alias"]},
+            [
+                {"fieldId": "summary", "name": "Summary", "required": True},
+                {"fieldId": "priority", "key": "alias", "name": "Priority", "required": False, "allowedValues": [1]},
+            ],
+        ),
         ({"field_ids": ["missing"]}, []),
     ],
 )
 async def test_create_field_filters(mock_jira, filters, expected):
     """Filter a single page by identity and retain options only for selected IDs."""
     requests, responses = mock_jira
-    responses.append(httpx2.Response(200, json={"startAt": 0, "maxResults": 2, "total": 3, "fields": [
-        {"fieldId": "summary", "required": True, "allowedValues": ["large"]},
-        {"fieldId": "priority", "key": "alias", "required": False, "allowedValues": [1]},
-    ]}))
+    responses.append(
+        httpx2.Response(
+            200,
+            json={
+                "startAt": 0,
+                "maxResults": 2,
+                "total": 3,
+                "fields": [
+                    {"fieldId": "summary", "name": "Summary", "required": True, "allowedValues": ["large"]},
+                    {
+                        "fieldId": "priority",
+                        "key": "alias",
+                        "name": "Priority",
+                        "required": False,
+                        "allowedValues": [1],
+                    },
+                ],
+            },
+        )
+    )
     result = await invoke("list_create_fields", {"project": "TEAM", "issue_type_id": "9", **filters})
     assert not result.is_error
     assert result.structured_content["fields"] == expected
-    assert result.structured_content["next_start_at"] == 2
-    assert len(json.dumps(result.structured_content)) < 1024
+    expected_next = 2
+    compact_limit = 1024
+    assert result.structured_content["next_start_at"] == expected_next
+    assert len(json.dumps(result.structured_content)) < compact_limit
     assert len(requests) == 1
 
 

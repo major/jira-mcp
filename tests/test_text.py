@@ -117,12 +117,25 @@ def test_markdown_extended_subset():
     result = markdown_to_adf(text)["content"]
     assert result == [
         {"type": "heading", "attrs": {"level": 2}, "content": [_text("Heading")]},
-        {"type": "orderedList", "attrs": {"order": 3}, "content": [
-            {"type": "listItem", "content": [_para({"type": "text", "text": "site", "marks": [
-                {"type": "link", "attrs": {"href": "https://example.com"}}
-            ]})]},
-            {"type": "listItem", "content": [_para(_text("[x](https://x)", code=True))]},
-        ]},
+        {
+            "type": "orderedList",
+            "attrs": {"order": 3},
+            "content": [
+                {
+                    "type": "listItem",
+                    "content": [
+                        _para(
+                            {
+                                "type": "text",
+                                "text": "site",
+                                "marks": [{"type": "link", "attrs": {"href": "https://example.com"}}],
+                            }
+                        )
+                    ],
+                },
+                {"type": "listItem", "content": [_para(_text("[x](https://x)", code=True))]},
+            ],
+        },
         _para(_text("[bad](javascript:alert)")),
     ]
 
