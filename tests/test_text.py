@@ -146,6 +146,24 @@ def test_markdown_heading_levels(level):
     assert markdown_to_adf(f"{'#' * level} Title")["content"][0]["attrs"] == {"level": level}
 
 
+@pytest.mark.parametrize("url", ["http://example.com", "mailto:team@example.com", "HTTPS://example.com"])
+def test_markdown_links_with_surrounding_text(url):
+    """Keep surrounding text and multiple links while accepting supported schemes."""
+    markdown = f"Read [one]({url}) and [two]({url}); [unfinished](https://example.com"
+
+    content = markdown_to_adf(markdown)["content"]
+
+    assert content == [
+        _para(
+            _text("Read "),
+            {"type": "text", "text": "one", "marks": [{"type": "link", "attrs": {"href": url}}]},
+            _text(" and "),
+            {"type": "text", "text": "two", "marks": [{"type": "link", "attrs": {"href": url}}]},
+            _text("; [unfinished](https://example.com"),
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("body", "expected"),
     [

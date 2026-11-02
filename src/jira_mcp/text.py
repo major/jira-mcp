@@ -43,8 +43,8 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
                 items = [{"type": "listItem", "content": [_paragraph([line[len(BULLET) :]])]} for line in lines]
                 blocks.append({"type": "bulletList", "content": items})
             elif kind == "ordered":
-                matches = [ORDERED.match(line) for line in lines]
-                items = [{"type": "listItem", "content": [_paragraph([match.group(2)])]} for match in matches if match]
+                matches = [match for line in lines if (match := ORDERED.match(line)) is not None]
+                items = [{"type": "listItem", "content": [_paragraph([match.group(2)])]} for match in matches]
                 blocks.append({"type": "orderedList", "attrs": {"order": int(matches[0].group(1))}, "content": items})
             elif kind == "heading":
                 for line in lines:
