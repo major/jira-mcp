@@ -100,7 +100,7 @@ INSTRUCTIONS = (
     "list_fields(search, start_at, max_results, issue, refresh); "
     "list_project_issue_types(project, start_at, max_results); "
     "list_create_fields(project, issue_type_id, start_at, max_results); "
-    "create_issue(project, issue_type_id, summary, description, labels, priority_id, "
+    "create_issue(project, issue_type_id, summary, description, description_adf, labels, priority_id, "
     "assignee_account_id, parent, additional_fields, validate_only); "
     "get_current_user(); search_users(query, start_at, max_results); "
     "get_issue_transitions(issue); transition_issue(issue, transition_id, fields); "
