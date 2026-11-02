@@ -5,8 +5,10 @@ import json
 import httpx2
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from jira_mcp import mcp
+from jira_mcp.tools.create import validate_description_adf
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
@@ -427,15 +429,25 @@ async def test_create_rich_adf_preserved(mock_jira, monkeypatch, preview):
     """Preserve rich ADF in previews and the single creation POST."""
     requests, responses = mock_jira
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "false" if preview else "true")
-    adf = {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [
-        {"type": "text", "text": "café " + "x" * 35_000, "marks": [{"type": "strong"}]}
-    ]}], "extra": {"nested": [None, True]}}
+    adf = {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "café " + "x" * 35_000, "marks": [{"type": "strong"}]}],
+            }
+        ],
+        "extra": {"nested": [None, True]},
+    }
     responses.append(create_metadata("description"))
     if not preview:
         responses.append(httpx2.Response(201, json={"id": "1", "key": "TEAM-1"}))
 
-    result = await invoke("create_issue", {"project": "TEAM", "issue_type_id": "9", "summary": "Title",
-                                           "description_adf": adf, "validate_only": preview})
+    result = await invoke(
+        "create_issue",
+        {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "description_adf": adf, "validate_only": preview},
+    )
 
     assert not result.is_error
     assert [request.method for request in requests] == (["GET"] if preview else ["GET", "POST"])
@@ -443,7 +455,7 @@ async def test_create_rich_adf_preserved(mock_jira, monkeypatch, preview):
     assert fields["description"] == adf
 
 
-@pytest.mark.parametrize("extra,accepted", [(0, True), (1, False)])
+@pytest.mark.parametrize(("extra", "accepted"), [(0, True), (1, False)])
 async def test_create_adf_utf8_size_boundary(mock_jira, extra, accepted):
     """Measure compact UTF-8 bytes, including multibyte characters, at the limit."""
     requests, responses = mock_jira
@@ -453,8 +465,10 @@ async def test_create_adf_utf8_size_boundary(mock_jira, extra, accepted):
     if accepted:
         responses.append(create_metadata("description"))
 
-    result = await invoke("create_issue", {"project": "TEAM", "issue_type_id": "9", "summary": "Title",
-                                           "description_adf": adf, "validate_only": True})
+    result = await invoke(
+        "create_issue",
+        {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "description_adf": adf, "validate_only": True},
+    )
 
     assert result.is_error is not accepted
     assert len(requests) == int(accepted)
@@ -462,20 +476,21 @@ async def test_create_adf_utf8_size_boundary(mock_jira, extra, accepted):
         assert result.structured_content["fields"]["description"] == adf
 
 
-@pytest.mark.parametrize("adf,description", [
-    ({"type": "bad", "version": 1, "content": [], "secret": "test-secret"}, None),
-    ({"type": "doc", "version": True, "content": []}, None),
-    ({"type": "doc", "version": 2, "content": []}, None),
-    ({"type": "doc", "version": 1, "content": {}}, None),
-    ({"type": "doc", "version": 1, "content": [], "value": float("nan")}, None),
-    ({"type": "doc", "version": 1, "content": []}, ""),
-    ({"type": "doc", "version": 1, "content": []}, "text"),
-])
+@pytest.mark.parametrize(
+    ("adf", "description"),
+    [
+        ({"type": "bad", "version": 1, "content": [], "secret": "test-secret"}, None),
+        ({"type": "doc", "version": True, "content": []}, None),
+        ({"type": "doc", "version": 2, "content": []}, None),
+        ({"type": "doc", "version": 1, "content": {}}, None),
+        ({"type": "doc", "version": 1, "content": []}, ""),
+        ({"type": "doc", "version": 1, "content": []}, "text"),
+    ],
+)
 async def test_create_rejects_invalid_adf_before_requests(mock_jira, adf, description):
     """Reject invalid envelopes, non-JSON values, and conflicting descriptions safely."""
     requests, _ = mock_jira
-    args = {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "description_adf": adf,
-            "validate_only": True}
+    args = {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "description_adf": adf, "validate_only": True}
     if description is not None:
         args["description"] = description
 
@@ -489,10 +504,6 @@ async def test_create_rejects_invalid_adf_before_requests(mock_jira, adf, descri
 @pytest.mark.parametrize("value", [1.0, True, float("nan"), object(), "\ud800"])
 def test_adf_helper_rejects_invalid_values(value):
     """Reject non-integer versions and values that cannot be safely serialized."""
-    from fastmcp.exceptions import ToolError
-
-    from jira_mcp.tools.create import validate_description_adf
-
     adf = {"type": "doc", "version": 1, "content": []}
     if value is True or value == 1.0:
         adf["version"] = value

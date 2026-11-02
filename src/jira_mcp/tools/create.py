@@ -1,5 +1,6 @@
 """Discover creation metadata and create Jira issues when explicitly enabled."""
 
+import json
 from typing import Annotated, Any
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
@@ -59,6 +60,28 @@ NOT_CREATED = "No issue was created"
 
 
 CREATE_UNCERTAIN = "Creation not confirmed; the issue may already exist. Please verify Jira before retrying."
+ADF_MAX_BYTES = 100_000
+
+
+def validate_description_adf(adf: dict[str, Any]) -> dict[str, Any]:
+    """Validate the ADF envelope and compact UTF-8 JSON size without changing its content."""
+    if (
+        adf.get("type") != "doc"
+        or type(adf.get("version")) is not int
+        or adf["version"] != 1
+        or not isinstance(adf.get("content"), list)
+    ):
+        msg = "Invalid description_adf: expected an ADF document envelope."
+        raise ToolError(msg)
+    try:
+        size = len(json.dumps(adf, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+    except TypeError, ValueError, UnicodeError, RecursionError:
+        msg = "Invalid description_adf: expected serializable JSON."
+        raise ToolError(msg) from None
+    if size > ADF_MAX_BYTES:
+        msg = "Invalid description_adf: compact UTF-8 JSON exceeds 100,000 bytes."
+        raise ToolError(msg)
+    return adf
 
 
 # Only statuses where Jira refuses before creating anything; any other failure is uncertain.
@@ -168,6 +191,7 @@ async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls sel
     ctx: Context,
     *,
     description: Description | None = None,
+    description_adf: dict[str, Any] | None = None,
     labels: Labels | None = None,
     priority_id: IssueId | None = None,
     assignee_account_id: AccountId | None = None,
@@ -178,8 +202,11 @@ async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls sel
     """Create one Jira issue after an explicit user request, or preview it with validate_only.
 
     Use a project key or numeric ID and an issue type ID from creation metadata.
-    Summary is required. Description is plain text, converted to ADF without
-    Markdown parsing. Additional system or custom fields retain their original JSON;
+    Summary is required. Description is plain text up to 100,000 characters,
+    converted to ADF without Markdown parsing. Alternatively, description_adf is
+    an ADF document with compact UTF-8 JSON up to 100,000 bytes. Only its envelope
+    is validated; nested ADF is passed unchanged. These inputs are mutually exclusive.
+    Additional system or custom fields retain their original JSON;
     provide ADF for any other rich-text fields. Core fields cannot be overridden.
 
     After local checks, it reads create-field metadata and reports missing required fields,
@@ -199,9 +226,14 @@ async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls sel
     if additional_fields and RESERVED_CREATE_FIELDS.intersection(additional_fields):
         msg = f"additional_fields cannot override {', '.join(sorted(RESERVED_CREATE_FIELDS))}."
         raise ToolError(msg)
+    if description is not None and description_adf is not None:
+        msg = "description and description_adf are mutually exclusive."
+        raise ToolError(msg)
 
     optional = {
-        "description": None if description is None else plain_text_to_adf(description),
+        "description": validate_description_adf(description_adf)
+        if description_adf is not None
+        else (None if description is None else plain_text_to_adf(description)),
         "labels": labels,
         "priority": None if priority_id is None else {"id": priority_id},
         "assignee": None if assignee_account_id is None else {"accountId": assignee_account_id},

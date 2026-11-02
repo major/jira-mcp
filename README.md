@@ -617,6 +617,12 @@ The project can be a key or numeric ID. `summary` must be a single line, contain
 non-whitespace text, and be at most 255 characters. An optional `description` is plain text up to
 100,000 characters, including an empty string. It is converted to minimal ADF,
 without interpreting Markdown. CRLF and CR become LF; blank lines are preserved.
+Alternatively, supply `description_adf` as a raw ADF document. It is mutually
+exclusive with `description`, including an empty description. The server checks
+only the document envelope (`type` is `doc`, integer `version` is 1, and `content`
+is an array), not nested ADF validity. All content and extra properties are preserved.
+Its compact JSON encoding must be at most 100,000 UTF-8 bytes, unlike the plain-text
+character limit. Jira validates the complete ADF document.
 These are server input bounds; Jira may impose lower limits on field values.
 Optional `labels` accepts up to 100 strings, each 1 to 255 characters without
 whitespace. An omitted list differs from an empty list.
