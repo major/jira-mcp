@@ -8,7 +8,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 from jira_mcp import mcp
-from jira_mcp.tools.create import validate_description_adf
+from jira_mcp.common import validate_description_adf
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")

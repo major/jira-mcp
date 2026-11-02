@@ -1,6 +1,5 @@
 """Discover creation metadata and create Jira issues when explicitly enabled."""
 
-import json
 from typing import Annotated, Any
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
@@ -13,30 +12,22 @@ from jira_mcp.common import (
     CREATE,
     READ_ONLY,
     AccountId,
+    Description,
     Issue,
     IssueId,
+    Labels,
     Offset,
     PageSize,
+    Summary,
     id_or_key,
     next_offset,
+    validate_description_adf,
     validate_payload,
 )
 from jira_mcp.create_metadata import CreateField, CreateFieldPage, CreateIssueTypePage, create_field_problems
 from jira_mcp.text import plain_text_to_adf
 
 Project = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*|[1-9][0-9]*)$", max_length=255)]
-
-
-Summary = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^[^\r\n]*\S[^\r\n]*$")]
-
-
-Description = Annotated[str, Field(max_length=100_000)]
-
-
-Label = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
-
-
-Labels = Annotated[list[Label], Field(max_length=100)]
 
 
 CreateFieldId = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$", max_length=255)]
@@ -63,30 +54,6 @@ NOT_CREATED = "No issue was created"
 
 
 CREATE_UNCERTAIN = "Creation not confirmed; the issue may already exist. Please verify Jira before retrying."
-ADF_MAX_BYTES = 100_000
-
-
-def validate_description_adf(adf: dict[str, Any]) -> dict[str, Any]:
-    """Validate the ADF envelope and compact UTF-8 JSON size without changing its content."""
-    if (
-        adf.get("type") != "doc"
-        or type(adf.get("version")) is not int
-        or adf["version"] != 1
-        or not isinstance(adf.get("content"), list)
-    ):
-        msg = "Invalid description_adf: expected an ADF document envelope."
-        raise ToolError(msg)
-    try:
-        size = len(json.dumps(adf, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
-    except TypeError, ValueError, UnicodeError, RecursionError:
-        msg = "Invalid description_adf: expected serializable JSON."
-        raise ToolError(msg) from None
-    if size > ADF_MAX_BYTES:
-        msg = "Invalid description_adf: compact UTF-8 JSON exceeds 100,000 bytes."
-        raise ToolError(msg)
-    return adf
-
-
 # Only statuses where Jira refuses before creating anything; any other failure is uncertain.
 CREATE_REJECTED = {
     400: "check the field values",

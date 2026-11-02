@@ -16,15 +16,31 @@ async def test_update_preview_without_edit_permission(mock_jira):
     requests, _ = mock_jira
     adf = {"type": "doc", "version": 1, "content": []}
 
-    result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "New", "description_adf": adf,
-                                          "priority_id": "1", "labels_add": ["a", "a"],
-                                          "labels_remove": ["b"], "validate_only": True})
+    result = await invoke(
+        "update_issue",
+        {
+            "issue": "DEMO-1",
+            "summary": "New",
+            "description_adf": adf,
+            "priority_id": "1",
+            "labels_add": ["a", "a"],
+            "labels_remove": ["b"],
+            "validate_only": True,
+        },
+    )
 
     assert not result.is_error
-    assert result.structured_content == {"validate_only": True, "issue": "DEMO-1", "edits_enabled": False,
-        "payload": {"fields": {"summary": "New", "description": adf, "priority": {"id": "1"}},
-                    "update": {"labels": [{"add": "a"}, {"remove": "b"}]}},
-        "expected_summary": None, "guard_checked": False}
+    assert result.structured_content == {
+        "validate_only": True,
+        "issue": "DEMO-1",
+        "edits_enabled": False,
+        "payload": {
+            "fields": {"summary": "New", "description": adf, "priority": {"id": "1"}},
+            "update": {"labels": [{"add": "a"}, {"remove": "b"}]},
+        },
+        "expected_summary": None,
+        "guard_checked": False,
+    }
     assert not requests
 
 
@@ -34,8 +50,10 @@ async def test_update_guard_and_write(mock_jira, monkeypatch):
     requests, responses = mock_jira
     responses.extend([httpx2.Response(200, json={"fields": {"summary": "Old"}}), httpx2.Response(204)])
 
-    result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "New", "description": "",
-                                          "labels_add": ["x", "x"], "expected_summary": "Old"})
+    result = await invoke(
+        "update_issue",
+        {"issue": "DEMO-1", "summary": "New", "description": "", "labels_add": ["x", "x"], "expected_summary": "Old"},
+    )
 
     assert not result.is_error
     assert result.structured_content == {"issue": "DEMO-1", "updated": True}
@@ -44,8 +62,16 @@ async def test_update_guard_and_write(mock_jira, monkeypatch):
     assert json.loads(requests[1].content)["update"] == {"labels": [{"add": "x"}]}
 
 
-@pytest.mark.parametrize("args", [{}, {"labels_add": []}, {"labels_add": ["x"], "labels_remove": ["x"]},
-                                    {"description": "", "description_adf": {}}, {"description_adf": {}}])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {},
+        {"labels_add": []},
+        {"labels_add": ["x"], "labels_remove": ["x"]},
+        {"description": "", "description_adf": {}},
+        {"description_adf": {}},
+    ],
+)
 async def test_update_invalid_changes_do_not_request(mock_jira, args):
     """Reject invalid or empty edits before contacting Jira."""
     requests, _ = mock_jira
@@ -54,6 +80,35 @@ async def test_update_invalid_changes_do_not_request(mock_jira, args):
 
     assert result.is_error
     assert not requests
+
+
+@pytest.mark.parametrize("value", [None, 12, "wrong"])
+async def test_update_guard_rejects_mismatch_or_invalid_summary(mock_jira, monkeypatch, value):
+    """Do not write when the summary guard fails or Jira returns invalid data."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"fields": {"summary": value}}))
+
+    result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "New", "expected_summary": "Old"})
+
+    assert result.is_error
+    assert [request.method for request in requests] == ["GET"]
+    assert "outcome is unknown" not in result.content[0].text
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 429, 500])
+async def test_update_write_failure_is_safe(mock_jira, monkeypatch, status):
+    """Distinguish rejected writes from uncertain outcomes without exposing Jira content."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(status, text="secret upstream body"))
+
+    result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "New"})
+
+    assert result.is_error
+    assert [request.method for request in requests] == ["PUT"]
+    assert "secret upstream body" not in result.content[0].text
+    assert ("outcome is unknown" in result.content[0].text) == (status not in {400, 401, 403, 404, 422, 429})
 
 
 async def test_issue_defaults_and_cloud_auth(mock_jira):

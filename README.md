@@ -34,6 +34,7 @@ and API token. Choose the smallest suitable scopes and account permissions.
 | `JIRA_ATTACHMENT_MAX_BYTES` | Per-file byte limit, default `10485760`, maximum `104857600` |
 | `JIRA_TIMEOUT` | Optional finite positive request timeout in seconds, default `30` |
 | `JIRA_ENABLE_ISSUE_CREATION` | Enable only `create_issue`; `true` or `false`, case-insensitive; default `false` |
+| `JIRA_ENABLE_ISSUE_EDITS` | Enable only `update_issue`; `true` or `false`, case-insensitive; default `false` |
 
 Only these Cloud URL forms are accepted. Custom domains and Data Center URLs
 are not supported. Do not append `/rest/api/3`. Requests use verified TLS and
@@ -195,6 +196,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `create_issue` | Validate and create one issue, or preview it with `validate_only`. **Writes.** |
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
 | `get_issue` | Read ticket fields, description, and optional field metadata. |
+| `update_issue` | **Writes.** Update core fields and incrementally add or remove labels, or preview the payload. |
 | `get_issue_comments` | Read one oldest-first page of ticket comments. |
 | `add_issue_comment` | Add a comment with simple Markdown, or preview its ADF with `validate_only`. **Writes.** |
 | `get_issues` | Fetch 1 through 20 known tickets in one request. |
@@ -644,6 +646,15 @@ Optional `priority_id` takes a priority ID from the `priority` allowed values.
 Optional `assignee_account_id` takes an account ID from `search_users`; the server
 cannot check whether that user is assignable. Optional `parent` takes an issue key
 or numeric ID, for example the Epic of a story or the parent of a sub-task.
+
+Core fields cannot be changed through creation's `additional_fields`. Use `update_issue`
+to repair supported core fields after creation. Set `JIRA_ENABLE_ISSUE_EDITS=true`
+and restart the server to enable edits; this setting is independent of creation,
+comments, and assignment. `validate_only=true` previews without Jira requests and
+does not validate permissions or the summary precondition. The optional
+`expected_summary` guard checks only the summary at read time, not independent
+description changes. It is not atomic: another edit can race before the PUT.
+An uncertain write must be inspected with `get_issue` before retrying.
 
 `additional_fields` accepts up to 100 system or custom field IDs and their
 original JSON values, including `null`, objects, and arrays. Use `fieldId` values
