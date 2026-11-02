@@ -41,10 +41,12 @@ async def add_issue_comment(
     visibility: Visibility | None = None,
     validate_only: bool = False,
 ) -> dict[str, Any]:
-    """Add one comment, converting paragraphs, "- " bullet lists, and `inline code` to ADF.
+    """Add one comment, converting a small Markdown subset to ADF.
 
-    Blank lines separate paragraphs and single line breaks are kept. Other Markdown
-    stays plain text. Bare URLs and issue keys pass through and Jira links them.
+    Blank lines separate paragraphs and single line breaks are kept. The converter
+    supports headings, flat bullet and ordered lists, inline code, and explicit
+    http, https, or mailto links. Other Markdown stays plain text. Bare URLs and
+    issue keys pass through for Jira to link.
     Visibility limits the comment to a group or project role. validate_only returns
     the ADF that would be sent without any request. Otherwise this makes exactly one
     POST that is never retried. If it fails, times out, or is cancelled, the comment

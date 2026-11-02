@@ -227,7 +227,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `get_issue_comments` | 20 comments, 4,000 characters per body |
 | `add_issue_comment` | Required `issue` and `body`, optional `visibility`, `validate_only` false |
 | `get_issues` | Same fields as `get_issue`, 12,000 description characters per ticket |
-| `list_create_fields` | Required `project` and `issue_type_id`, 50 fields |
+| `list_create_fields` | Required `project` and `issue_type_id`, 50 fields; optional `field_ids` and `required_only` |
 | `list_fields` | 50 fields, optional ID/name search, five-minute catalog cache |
 | `list_project_issue_types` | Required `project`, 50 issue types |
 | `search_issues` | 20 tickets, 2,000 description characters per ticket |
@@ -239,6 +239,19 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `create_issue_link` | Required `link_type_id`, `inward_issue`, and `outward_issue` |
 | `get_issue_remote_links` | Required `issue`, returns all visible remote links |
 | `create_issue_remote_link` | Required `issue`, `url`, and `title`, checks exact URL first |
+
+Issue creation is disabled by default. Set `JIRA_ENABLE_ISSUE_CREATION=true` in this server's
+environment and restart it to enable issue creation. Falling back to another or legacy server bypasses
+this server's gate; check that server's own controls before using it.
+
+Comments support headings, flat bullet and ordered lists, inline code, and explicit links with
+`http`, `https`, or `mailto` schemes. Other Markdown stays literal. Issue creation accepts either
+plain-text `description` or raw `description_adf`; it does not parse Markdown.
+
+For `list_create_fields`, `field_ids` selects by `fieldId` or `key`, `required_only` selects
+required fields, and together they select both. Filtering applies to each Jira page. Follow
+`next_start_at` even when the filtered page is empty. Filtered fields omit `allowedValues` unless
+explicitly selected by ID; without filters, the full existing payload is preserved.
 
 ### Attachments 📎
 
@@ -704,7 +717,10 @@ The body supports a small Markdown subset that becomes ADF:
 
 - blank lines separate paragraphs, and single line breaks are kept
 - lines starting with `- ` become bullet list items
+- lines starting with `# ` through `###### ` become headings
+- lines starting with `1. ` become ordered list items, preserving the starting number
 - text in backticks gets the inline `code` mark
+- explicit `[text](url)` links support `http`, `https`, and `mailto` schemes
 
 Other Markdown stays plain text. Bare URLs and issue keys pass through, and Jira
 links them. Bodies can be up to 32,767 characters. Add

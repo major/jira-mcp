@@ -9,6 +9,9 @@ BLANK_LINES = re.compile(r"\n(?:[^\S\n]*\n)+")
 # The capture group makes re.split put each code span at an odd index.
 INLINE_CODE = re.compile(r"`([^`]+)`")
 BULLET = "- "
+HEADING = re.compile(r"^(#{1,6}) (.*)$")
+ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
+LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 
 
 def plain_text_to_adf(text: str) -> dict[str, Any]:
@@ -27,22 +30,49 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
 def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
-    Blank lines separate paragraphs, lines starting with "- " become bullet list items,
-    other single line breaks become hard breaks, and text in backticks gets a code mark.
-    Bare URLs and issue keys stay text because Jira links them on its own.
+    Support headings, flat bullet and ordered lists, inline code, and explicit safe links.
+    Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     blocks: list[dict[str, Any]] = []
     for chunk in BLANK_LINES.split(normalized):
-        for is_bullet, group in groupby(chunk.split("\n"), key=lambda line: line.startswith(BULLET)):
+        for kind, group in groupby(chunk.split("\n"), key=_block_kind):
             lines = list(group)
-            if is_bullet:
+            if kind == "bullet":
                 items = [{"type": "listItem", "content": [_paragraph([line[len(BULLET) :]])]} for line in lines]
                 blocks.append({"type": "bulletList", "content": items})
+            elif kind == "ordered":
+                matches = [match for line in lines if (match := ORDERED.match(line)) is not None]
+                items = [{"type": "listItem", "content": [_paragraph([match.group(2)])]} for match in matches]
+                blocks.append({"type": "orderedList", "attrs": {"order": int(matches[0].group(1))}, "content": items})
+            elif kind == "heading":
+                for line in lines:
+                    match = HEADING.match(line)
+                    if match is None:
+                        continue
+                    paragraph = _paragraph([match.group(2)])
+                    blocks.append(
+                        {
+                            "type": "heading",
+                            "attrs": {"level": len(match.group(1))},
+                            **{key: value for key, value in paragraph.items() if key == "content"},
+                        }
+                    )
             else:
                 blocks.append(_paragraph(lines))
     return {"type": "doc", "version": 1, "content": blocks}
+
+
+def _block_kind(line: str) -> str:
+    """Classify a single supported block without interpreting nested Markdown."""
+    if line.startswith(BULLET):
+        return "bullet"
+    if ORDERED.match(line):
+        return "ordered"
+    if HEADING.match(line):
+        return "heading"
+    return "paragraph"
 
 
 def _paragraph(lines: list[str]) -> dict[str, Any]:
@@ -53,10 +83,23 @@ def _paragraph(lines: list[str]) -> dict[str, Any]:
             content.append({"type": "hardBreak"})
         for position, part in enumerate(INLINE_CODE.split(line)):
             if part:
-                node: dict[str, Any] = {"type": "text", "text": part}
                 if position % 2:
-                    node["marks"] = [{"type": "code"}]
-                content.append(node)
+                    content.append({"type": "text", "text": part, "marks": [{"type": "code"}]})
+                else:
+                    start = 0
+                    for match in LINK.finditer(part):
+                        if match.start() > start:
+                            content.append({"type": "text", "text": part[start : match.start()]})
+                        content.append(
+                            {
+                                "type": "text",
+                                "text": match.group(1),
+                                "marks": [{"type": "link", "attrs": {"href": match.group(2)}}],
+                            }
+                        )
+                        start = match.end()
+                    if start < len(part):
+                        content.append({"type": "text", "text": part[start:]})
     paragraph: dict[str, Any] = {"type": "paragraph"}
     if content:
         paragraph["content"] = content
