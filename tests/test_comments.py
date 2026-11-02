@@ -10,7 +10,7 @@ from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
 
-BODY = "Fixed in `main`.\n\n- added tests"
+BODY = "## Fixed\n3. [tests](https://example.com)\n4. `main`"
 VISIBILITY = {"type": "role", "value": "Developers"}
 
 

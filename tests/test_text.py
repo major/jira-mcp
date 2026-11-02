@@ -111,6 +111,28 @@ def test_markdown_to_adf_round_trips_through_rendering():
     assert rendered == "Closing.\n- fixed `parse()`\n- added tests"
 
 
+def test_markdown_extended_subset():
+    """Convert headings, ordered lists and safe links while preserving code and unsafe links."""
+    text = "## Heading\n3. [site](https://example.com)\n4. `[x](https://x)`\n[bad](javascript:alert)"
+    result = markdown_to_adf(text)["content"]
+    assert result == [
+        {"type": "heading", "attrs": {"level": 2}, "content": [_text("Heading")]},
+        {"type": "orderedList", "attrs": {"order": 3}, "content": [
+            {"type": "listItem", "content": [_para({"type": "text", "text": "site", "marks": [
+                {"type": "link", "attrs": {"href": "https://example.com"}}
+            ]})]},
+            {"type": "listItem", "content": [_para(_text("[x](https://x)", code=True))]},
+        ]},
+        _para(_text("[bad](javascript:alert)")),
+    ]
+
+
+@pytest.mark.parametrize("level", range(1, 7))
+def test_markdown_heading_levels(level):
+    """Support each ADF heading level."""
+    assert markdown_to_adf(f"{'#' * level} Title")["content"][0]["attrs"] == {"level": level}
+
+
 @pytest.mark.parametrize(
     ("body", "expected"),
     [

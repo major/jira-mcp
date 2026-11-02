@@ -135,6 +135,42 @@ async def test_create_metadata_fields_are_fresh(mock_jira):
     assert len(requests) == expected_requests
 
 
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        ({"field_ids": ["alias"]}, [{"fieldId": "priority", "key": "alias", "required": False, "allowedValues": [1]}]),
+        ({"required_only": True}, [{"fieldId": "summary", "required": True}]),
+        ({"required_only": True, "field_ids": ["alias"]}, [
+            {"fieldId": "summary", "required": True},
+            {"fieldId": "priority", "key": "alias", "required": False, "allowedValues": [1]},
+        ]),
+        ({"field_ids": ["missing"]}, []),
+    ],
+)
+async def test_create_field_filters(mock_jira, filters, expected):
+    """Filter a single page by identity and retain options only for selected IDs."""
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"startAt": 0, "maxResults": 2, "total": 3, "fields": [
+        {"fieldId": "summary", "required": True, "allowedValues": ["large"]},
+        {"fieldId": "priority", "key": "alias", "required": False, "allowedValues": [1]},
+    ]}))
+    result = await invoke("list_create_fields", {"project": "TEAM", "issue_type_id": "9", **filters})
+    assert not result.is_error
+    assert result.structured_content["fields"] == expected
+    assert result.structured_content["next_start_at"] == 2
+    assert len(json.dumps(result.structured_content)) < 1024
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("field_ids", [[], ["bad-id"], ["x"] * 101])
+async def test_create_field_filter_validation(mock_jira, field_ids):
+    """Reject invalid filter lists before requesting Jira."""
+    requests, _ = mock_jira
+    result = await invoke("list_create_fields", {"project": "TEAM", "issue_type_id": "9", "field_ids": field_ids})
+    assert result.is_error
+    assert requests == []
+
+
 async def test_create_metadata_argument_upper_bounds(mock_jira):
     """Accept the documented maximum path lengths and both page-size bounds."""
     requests, responses = mock_jira
@@ -362,7 +398,8 @@ async def test_create_disabled_and_read_post_tools_still_work(mock_jira):
 
     assert disabled.is_error
     assert any(tool.name == "create_issue" for tool in tools)
-    assert "JIRA_ENABLE_ISSUE_CREATION" in disabled.content[0].text
+    assert "JIRA_ENABLE_ISSUE_CREATION=true" in disabled.content[0].text
+    assert "restart" in disabled.content[0].text
     assert "not confirmed" not in disabled.content[0].text
     assert not bulk.is_error
     assert not search.is_error
