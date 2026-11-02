@@ -34,6 +34,7 @@ and API token. Choose the smallest suitable scopes and account permissions.
 | `JIRA_ATTACHMENT_MAX_BYTES` | Per-file byte limit, default `10485760`, maximum `104857600` |
 | `JIRA_TIMEOUT` | Optional finite positive request timeout in seconds, default `30` |
 | `JIRA_ENABLE_ISSUE_CREATION` | Enable only `create_issue`; `true` or `false`, case-insensitive; default `false` |
+| `JIRA_ENABLE_ISSUE_EDITS` | Enable only `update_issue`; `true` or `false`, case-insensitive; default `false` |
 
 Only these Cloud URL forms are accepted. Custom domains and Data Center URLs
 are not supported. Do not append `/rest/api/3`. Requests use verified TLS and
@@ -195,6 +196,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `create_issue` | Validate and create one issue, or preview it with `validate_only`. **Writes.** |
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
 | `get_issue` | Read ticket fields, description, and optional field metadata. |
+| `update_issue` | **Writes.** Update core fields and incrementally add or remove labels, or preview the payload. |
 | `get_issue_comments` | Read one oldest-first page of ticket comments. |
 | `add_issue_comment` | Add a comment with simple Markdown, or preview its ADF with `validate_only`. **Writes.** |
 | `get_issues` | Fetch 1 through 20 known tickets in one request. |
@@ -645,6 +647,9 @@ Optional `assignee_account_id` takes an account ID from `search_users`; the serv
 cannot check whether that user is assignable. Optional `parent` takes an issue key
 or numeric ID, for example the Epic of a story or the parent of a sub-task.
 
+Core fields cannot be changed through creation's `additional_fields`. Use `update_issue`
+to repair supported core fields after creation.
+
 `additional_fields` accepts up to 100 system or custom field IDs and their
 original JSON values, including `null`, objects, and arrays. Use `fieldId` values
 returned by creation metadata, never `*all` or names. `project`, `issuetype`,
@@ -692,6 +697,41 @@ The second case also applies if a call times out or is cancelled before returnin
 a key, even when no warning reaches the client. Do not retry automatically.
 Local validation, missing configuration, or a disabled issue creation setting make no
 creation request. Upstream errors remain sanitized.
+
+### Update an issue ✏️
+
+Set `JIRA_ENABLE_ISSUE_EDITS=true` and restart the server to enable `update_issue`.
+The setting defaults to `false` and does not gate creation, comments, assignment,
+or other existing write tools. Authorize each intended edit; updates may trigger
+Jira notifications or automation and require the Jira Edit issues permission.
+
+```json
+{
+  "issue": "DEMO-1",
+  "summary": "Corrected title",
+  "labels_add": ["reviewed"],
+  "labels_remove": ["needs-review"],
+  "expected_summary": "Original title",
+  "validate_only": true
+}
+```
+
+Optional `summary`, `description`, `description_adf`, and `priority_id` replace only
+the corresponding fields. Omitted or null arguments leave fields unchanged.
+Descriptions use the same plain-text conversion or raw ADF envelope and size checks
+as `create_issue`; the two description inputs are mutually exclusive. An empty
+plain-text description clears its content. Replacing a description is not an append.
+Label additions and removals are incremental, so unrelated labels are preserved.
+Duplicate labels are collapsed, overlap between additions and removals is rejected,
+and empty label lists alone do not count as a change. At least one change is required.
+
+`validate_only=true` works even when edits are disabled and returns the exact
+`payload`, `edits_enabled`, and `guard_checked=false`, without Jira requests.
+It does not check permissions or the summary precondition. On execution, optional
+`expected_summary` checks only the summary at read time, not independent description
+changes. It is not atomic: another edit can race between the guard GET and PUT.
+Execution makes one PUT and never retries automatically. If the write outcome is
+unknown, inspect `get_issue` before retrying.
 
 ### Read all visible comments
 

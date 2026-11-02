@@ -18,6 +18,7 @@ TOOLS = {
     "get_current_user": "read",
     "search_users": "read",
     "get_issue": "read",
+    "update_issue": "write",
     "get_issues": "read",
     "search_issues": "read",
     "get_issue_comments": "read",

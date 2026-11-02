@@ -16,6 +16,7 @@ def clean_env(monkeypatch):
         "JIRA_API_TOKEN",
         "JIRA_TIMEOUT",
         "JIRA_ENABLE_ISSUE_CREATION",
+        "JIRA_ENABLE_ISSUE_EDITS",
         "JIRA_ATTACHMENT_DIRECTORIES",
         "JIRA_ATTACHMENT_MAX_BYTES",
     ):
@@ -33,9 +34,31 @@ def test_defaults_and_secret_repr(monkeypatch):
     assert settings.url == "https://example.atlassian.net"
     assert settings.timeout == float("30")
     assert settings.enable_issue_creation is False
+    assert settings.enable_issue_edits is False
     assert settings.attachment_directories == ()
     assert settings.attachment_max_bytes == 10 * 1024 * 1024
     assert "hidden-secret" not in repr(settings)
+
+
+@pytest.mark.parametrize(("value", "enabled"), [("TRUE", True), ("false", False)])
+def test_edit_setting(cloud_env, monkeypatch, value, enabled):
+    """Parse the edit gate independently and case-insensitively."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", value)
+
+    settings = Settings.from_env()
+
+    assert settings.enable_issue_edits is enabled
+
+
+def test_invalid_edit_setting_is_safe(cloud_env, monkeypatch):
+    """Report an invalid edit setting without its value."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "secret-value")
+
+    with pytest.raises(ConfigError) as error:
+        Settings.from_env()
+
+    assert "JIRA_ENABLE_ISSUE_EDITS" in str(error.value)
+    assert "secret-value" not in str(error.value)
 
 
 @pytest.fixture

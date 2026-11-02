@@ -23,6 +23,7 @@ class Settings:
     token: str = field(repr=False)
     timeout: float = 30.0
     enable_issue_creation: bool = False
+    enable_issue_edits: bool = False
     attachment_directories: tuple[str, ...] = ()
     attachment_max_bytes: int = 10_485_760
 
@@ -56,6 +57,11 @@ class Settings:
             msg = "JIRA_ENABLE_ISSUE_CREATION must be true or false"
             raise ConfigError(msg)
 
+        edits = os.environ.get("JIRA_ENABLE_ISSUE_EDITS", "false").lower()
+        if edits not in ("true", "false"):
+            msg = "JIRA_ENABLE_ISSUE_EDITS must be true or false"
+            raise ConfigError(msg)
+
         try:
             roots = json.loads(os.environ.get("JIRA_ATTACHMENT_DIRECTORIES", "[]"))
             if not isinstance(roots, list) or any(
@@ -85,6 +91,7 @@ class Settings:
             token=values["JIRA_API_TOKEN"],
             timeout=timeout,
             enable_issue_creation=creation == "true",
+            enable_issue_edits=edits == "true",
             attachment_directories=tuple(roots),
             attachment_max_bytes=limit,
         )

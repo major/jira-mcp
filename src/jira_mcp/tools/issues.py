@@ -1,25 +1,31 @@
-"""Read Jira issues, bulk issue fetches, JQL search results, and comments."""
+"""Read and update Jira issues, bulk issue fetches, JQL search results, and comments."""
 
 from typing import Annotated, Any
 lazy from collections.abc import Sequence
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
 from fastmcp.exceptions import ToolError
-from pydantic import BaseModel, Field, StrictBool
+from pydantic import BaseModel, Field, StrictBool, StrictStr
 
 from jira_mcp.app import get_client, mcp
+from jira_mcp.client import JiraHTTPError
 from jira_mcp.common import (
     INVALID_PAYLOAD,
     READ_ONLY,
+    WRITE,
+    Description,
     Issue,
     IssueId,
     IssuePayload,
+    Labels,
     Offset,
     PageSize,
+    Summary,
     next_offset,
+    validate_description_adf,
     validate_payload,
 )
-from jira_mcp.text import render_text
+from jira_mcp.text import plain_text_to_adf, render_text
 
 IssueSelection = Annotated[list[Issue], Field(min_length=1, max_length=20)]
 
@@ -44,6 +50,104 @@ DEFAULT_FIELDS = "summary,status,issuetype,priority,assignee,reporter,labels,cre
 
 # REST links and UI hints that agents do not use. IDs, keys, and names stay for decisions and JQL.
 NOISE_KEYS = frozenset({"self", "iconUrl", "avatarUrls", "colorName"})
+
+
+class GuardFields(BaseModel):
+    """Require a string summary for the update precondition."""
+
+    summary: StrictStr
+
+
+class GuardIssue(BaseModel):
+    """Validate the issue response used by the update precondition."""
+
+    fields: GuardFields
+
+
+@mcp.tool(annotations=WRITE)
+async def update_issue(  # noqa: C901, PLR0912, PLR0913
+    issue: Issue,
+    ctx: Context,
+    *,
+    summary: Summary | None = None,
+    description: Description | None = None,
+    description_adf: dict[str, Any] | None = None,
+    labels_add: Labels | None = None,
+    labels_remove: Labels | None = None,
+    priority_id: IssueId | None = None,
+    expected_summary: Summary | None = None,
+    validate_only: bool = False,
+) -> dict[str, Any]:
+    """Update core issue fields, or preview the exact payload without Jira requests.
+
+    Omitted or null arguments leave fields untouched. Summary and priority replace
+    their fields. Description is plain text, converted like create_issue, or use
+    mutually exclusive description_adf for unchanged raw ADF with the same limits.
+    Descriptions replace rather than append; an empty plain description clears its
+    content. Labels are incremental additions or removals, deduplicated in order;
+    overlapping additions and removals are rejected. At least one change is required.
+
+    Preview does not check the precondition or Jira permissions. Edits require
+    JIRA_ENABLE_ISSUE_EDITS=true and a server restart. The optional summary guard
+    checks only the summary at read time, not description edits; it is not atomic
+    and another update can race between the GET and PUT. Execution makes one PUT,
+    may trigger notifications or automation, and never retries. Inspect get_issue
+    before retrying an uncertain write.
+    """
+    client = get_client(ctx)
+    enabled = ctx.lifespan_context["enable_issue_edits"]
+    if not enabled and not validate_only:
+        msg = "Issue edits are disabled. Set JIRA_ENABLE_ISSUE_EDITS=true and restart the server."
+        raise ToolError(msg)
+    if description is not None and description_adf is not None:
+        msg = "description and description_adf are mutually exclusive."
+        raise ToolError(msg)
+    added = list(dict.fromkeys(labels_add or []))
+    removed = list(dict.fromkeys(labels_remove or []))
+    if set(added) & set(removed):
+        msg = "labels_add and labels_remove must not overlap."
+        raise ToolError(msg)
+    fields: dict[str, Any] = {}
+    if summary is not None:
+        fields["summary"] = summary
+    if description_adf is not None:
+        fields["description"] = validate_description_adf(description_adf)
+    elif description is not None:
+        fields["description"] = plain_text_to_adf(description)
+    if priority_id is not None:
+        fields["priority"] = {"id": priority_id}
+    operations = [{"add": label} for label in added] + [{"remove": label} for label in removed]
+    payload: dict[str, Any] = {}
+    if fields:
+        payload["fields"] = fields
+    if operations:
+        payload["update"] = {"labels": operations}
+    if not payload:
+        msg = "At least one change is required."
+        raise ToolError(msg)
+    if validate_only:
+        return {
+            "validate_only": True,
+            "issue": issue,
+            "edits_enabled": enabled,
+            "payload": payload,
+            "expected_summary": expected_summary,
+            "guard_checked": False,
+        }
+    if expected_summary is not None:
+        data = await client.get(f"issue/{issue}", params={"fields": "summary"})
+        if validate_payload(GuardIssue, data).fields.summary != expected_summary:
+            msg = "Summary precondition did not match; no update was made."
+            raise ToolError(msg)
+    try:
+        await client.put(f"issue/{issue}", payload)
+    except ToolError as exc:
+        if isinstance(exc, JiraHTTPError) and exc.status_code in {400, 401, 403, 404, 422, 429}:
+            msg = f"Jira rejected the update with HTTP status {exc.status_code}; no update was made."
+            raise ToolError(msg) from None
+        msg = f"{exc}. The update outcome is unknown; inspect get_issue before retrying."
+        raise ToolError(msg) from None
+    return {"issue": issue, "updated": True}
 
 
 class BulkIssueError(BaseModel):

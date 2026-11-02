@@ -28,6 +28,7 @@ async def jira_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             "client": client,
             "field_catalog": FieldCatalogCache(client),
             "enable_issue_creation": settings.enable_issue_creation,
+            "enable_issue_edits": settings.enable_issue_edits,
             "browse_base": settings.browse_base,
             "attachment_storage": AttachmentStorage(settings.attachment_directories, settings.attachment_max_bytes),
         }

@@ -1,5 +1,6 @@
 """Share argument types, tool annotations, and payload helpers across tool modules."""
 
+import json
 from typing import Annotated, Any
 
 from fastmcp.exceptions import ToolError
@@ -47,3 +48,39 @@ def next_offset(start: int, count: int, total: int) -> int | None:
 def id_or_key(value: str) -> dict[str, str]:
     """Reference a Jira project or issue by numeric ID or by key."""
     return {"id" if value.isdigit() else "key": value}
+
+
+Summary = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^[^\r\n]*\S[^\r\n]*$")]
+
+
+Description = Annotated[str, Field(max_length=100_000)]
+
+
+Label = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^\S+$")]
+
+
+Labels = Annotated[list[Label], Field(max_length=100)]
+
+
+ADF_MAX_BYTES = 100_000
+
+
+def validate_description_adf(adf: dict[str, Any]) -> dict[str, Any]:
+    """Validate the ADF envelope and compact UTF-8 JSON size without changing its content."""
+    if (
+        adf.get("type") != "doc"
+        or type(adf.get("version")) is not int
+        or adf["version"] != 1
+        or not isinstance(adf.get("content"), list)
+    ):
+        msg = "Invalid description_adf: expected an ADF document envelope."
+        raise ToolError(msg)
+    try:
+        size = len(json.dumps(adf, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+    except TypeError, ValueError, UnicodeError, RecursionError:
+        msg = "Invalid description_adf: expected serializable JSON."
+        raise ToolError(msg) from None
+    if size > ADF_MAX_BYTES:
+        msg = "Invalid description_adf: compact UTF-8 JSON exceeds 100,000 bytes."
+        raise ToolError(msg)
+    return adf
