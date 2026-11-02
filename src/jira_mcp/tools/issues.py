@@ -1,4 +1,4 @@
-"""Read Jira issues, bulk issue fetches, JQL search results, and comments."""
+"""Read and update Jira issues, bulk issue fetches, JQL search results, and comments."""
 
 from typing import Annotated, Any
 lazy from collections.abc import Sequence
@@ -80,11 +80,19 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
 ) -> dict[str, Any]:
     """Update core issue fields, or preview the exact payload without Jira requests.
 
+    Omitted or null arguments leave fields untouched. Summary and priority replace
+    their fields. Description is plain text, converted like create_issue, or use
+    mutually exclusive description_adf for unchanged raw ADF with the same limits.
+    Descriptions replace rather than append; an empty plain description clears its
+    content. Labels are incremental additions or removals, deduplicated in order;
+    overlapping additions and removals are rejected. At least one change is required.
+
     Preview does not check the precondition or Jira permissions. Edits require
     JIRA_ENABLE_ISSUE_EDITS=true and a server restart. The optional summary guard
     checks only the summary at read time, not description edits; it is not atomic
-    and another update can race between the GET and PUT. Never retry an uncertain
-    write without inspecting get_issue first.
+    and another update can race between the GET and PUT. Execution makes one PUT,
+    may trigger notifications or automation, and never retries. Inspect get_issue
+    before retrying an uncertain write.
     """
     client = get_client(ctx)
     enabled = ctx.lifespan_context["enable_issue_edits"]

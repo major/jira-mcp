@@ -648,13 +648,7 @@ cannot check whether that user is assignable. Optional `parent` takes an issue k
 or numeric ID, for example the Epic of a story or the parent of a sub-task.
 
 Core fields cannot be changed through creation's `additional_fields`. Use `update_issue`
-to repair supported core fields after creation. Set `JIRA_ENABLE_ISSUE_EDITS=true`
-and restart the server to enable edits; this setting is independent of creation,
-comments, and assignment. `validate_only=true` previews without Jira requests and
-does not validate permissions or the summary precondition. The optional
-`expected_summary` guard checks only the summary at read time, not independent
-description changes. It is not atomic: another edit can race before the PUT.
-An uncertain write must be inspected with `get_issue` before retrying.
+to repair supported core fields after creation.
 
 `additional_fields` accepts up to 100 system or custom field IDs and their
 original JSON values, including `null`, objects, and arrays. Use `fieldId` values
@@ -703,6 +697,41 @@ The second case also applies if a call times out or is cancelled before returnin
 a key, even when no warning reaches the client. Do not retry automatically.
 Local validation, missing configuration, or a disabled issue creation setting make no
 creation request. Upstream errors remain sanitized.
+
+### Update an issue ✏️
+
+Set `JIRA_ENABLE_ISSUE_EDITS=true` and restart the server to enable `update_issue`.
+The setting defaults to `false` and does not gate creation, comments, assignment,
+or other existing write tools. Authorize each intended edit; updates may trigger
+Jira notifications or automation and require the Jira Edit issues permission.
+
+```json
+{
+  "issue": "DEMO-1",
+  "summary": "Corrected title",
+  "labels_add": ["reviewed"],
+  "labels_remove": ["needs-review"],
+  "expected_summary": "Original title",
+  "validate_only": true
+}
+```
+
+Optional `summary`, `description`, `description_adf`, and `priority_id` replace only
+the corresponding fields. Omitted or null arguments leave fields unchanged.
+Descriptions use the same plain-text conversion or raw ADF envelope and size checks
+as `create_issue`; the two description inputs are mutually exclusive. An empty
+plain-text description clears its content. Replacing a description is not an append.
+Label additions and removals are incremental, so unrelated labels are preserved.
+Duplicate labels are collapsed, overlap between additions and removals is rejected,
+and empty label lists alone do not count as a change. At least one change is required.
+
+`validate_only=true` works even when edits are disabled and returns the exact
+`payload`, `edits_enabled`, and `guard_checked=false`, without Jira requests.
+It does not check permissions or the summary precondition. On execution, optional
+`expected_summary` checks only the summary at read time, not independent description
+changes. It is not atomic: another edit can race between the guard GET and PUT.
+Execution makes one PUT and never retries automatically. If the write outcome is
+unknown, inspect `get_issue` before retrying.
 
 ### Read all visible comments
 

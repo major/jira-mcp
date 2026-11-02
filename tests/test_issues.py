@@ -5,7 +5,9 @@ import json
 
 import httpx2
 import pytest
+from fastmcp import Client
 
+from jira_mcp import mcp
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
@@ -25,6 +27,7 @@ async def test_update_preview_without_edit_permission(mock_jira):
             "priority_id": "1",
             "labels_add": ["a", "a"],
             "labels_remove": ["b"],
+            "expected_summary": "Old",
             "validate_only": True,
         },
     )
@@ -38,7 +41,7 @@ async def test_update_preview_without_edit_permission(mock_jira):
             "fields": {"summary": "New", "description": adf, "priority": {"id": "1"}},
             "update": {"labels": [{"add": "a"}, {"remove": "b"}]},
         },
-        "expected_summary": None,
+        "expected_summary": "Old",
         "guard_checked": False,
     }
     assert not requests
@@ -59,7 +62,78 @@ async def test_update_guard_and_write(mock_jira, monkeypatch):
     assert result.structured_content == {"issue": "DEMO-1", "updated": True}
     assert [request.method for request in requests] == ["GET", "PUT"]
     assert dict(requests[0].url.params) == {"fields": "summary"}
-    assert json.loads(requests[1].content)["update"] == {"labels": [{"add": "x"}]}
+    assert json.loads(requests[1].content) == {
+        "fields": {"summary": "New", "description": {"type": "doc", "version": 1, "content": [{"type": "paragraph"}]}},
+        "update": {"labels": [{"add": "x"}]},
+    }
+    assert requests[1].url.path == "/rest/api/3/issue/DEMO-1"
+
+
+@pytest.mark.parametrize(
+    ("changes", "payload"),
+    [
+        ({"priority_id": "3"}, {"fields": {"priority": {"id": "3"}}}),
+        (
+            {"labels_remove": ["old", "old"]},
+            {"update": {"labels": [{"remove": "old"}]}},
+        ),
+        (
+            {"description_adf": {"type": "doc", "version": 1, "content": []}},
+            {"fields": {"description": {"type": "doc", "version": 1, "content": []}}},
+        ),
+    ],
+)
+async def test_update_without_guard_sends_only_requested_changes(mock_jira, monkeypatch, changes, payload):
+    """Send one PUT without reading or replacing fields that were not requested."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(204))
+
+    result = await invoke("update_issue", {"issue": "123", **changes})
+
+    assert not result.is_error
+    assert [(request.method, request.url.path) for request in requests] == [("PUT", "/rest/api/3/issue/123")]
+    assert json.loads(requests[0].content) == payload
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_update_gate_is_captured_at_startup(mock_jira, monkeypatch, enabled):
+    """Require a restart for either direction of an edit-gate configuration change."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", str(enabled).lower())
+    requests, responses = mock_jira
+    if enabled:
+        responses.append(httpx2.Response(204))
+
+    async with Client(mcp) as client:
+        monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", str(not enabled).lower())
+        result = await client.call_tool("update_issue", {"issue": "DEMO-1", "summary": "New"}, raise_on_error=False)
+
+    assert result.is_error is not enabled
+    assert [request.method for request in requests] == (["PUT"] if enabled else [])
+    if not enabled:
+        assert "JIRA_ENABLE_ISSUE_EDITS=true" in result.content[0].text
+        assert "restart" in result.content[0].text
+
+
+@pytest.mark.parametrize("guard", [False, True])
+@pytest.mark.parametrize("transport_failure", [False, True])
+async def test_update_request_failures_do_not_retry(mock_jira, monkeypatch, guard, transport_failure):
+    """Keep read failures distinct from uncertain writes and never leak upstream details."""
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
+    requests, responses = mock_jira
+    responses.append(
+        httpx2.ReadTimeout("private transport text")
+        if transport_failure
+        else httpx2.Response(500, text="private upstream text")
+    )
+    options = {"expected_summary": "Old"} if guard else {}
+
+    result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "New", **options})
+
+    assert result.is_error
+    assert [request.method for request in requests] == (["GET"] if guard else ["PUT"])
+    assert "private" not in result.content[0].text
+    assert ("update outcome is unknown" in result.content[0].text) is not guard
 
 
 @pytest.mark.parametrize(
@@ -67,6 +141,7 @@ async def test_update_guard_and_write(mock_jira, monkeypatch):
     [
         {},
         {"labels_add": []},
+        {"expected_summary": "Old"},
         {"labels_add": ["x"], "labels_remove": ["x"]},
         {"description": "", "description_adf": {}},
         {"description_adf": {}},
@@ -82,12 +157,12 @@ async def test_update_invalid_changes_do_not_request(mock_jira, args):
     assert not requests
 
 
-@pytest.mark.parametrize("value", [None, 12, "wrong"])
-async def test_update_guard_rejects_mismatch_or_invalid_summary(mock_jira, monkeypatch, value):
+@pytest.mark.parametrize("fields", [{}, {"summary": None}, {"summary": 12}, {"summary": "wrong"}])
+async def test_update_guard_rejects_mismatch_or_invalid_summary(mock_jira, monkeypatch, fields):
     """Do not write when the summary guard fails or Jira returns invalid data."""
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
     requests, responses = mock_jira
-    responses.append(httpx2.Response(200, json={"fields": {"summary": value}}))
+    responses.append(httpx2.Response(200, json={"fields": fields}))
 
     result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "New", "expected_summary": "Old"})
 
