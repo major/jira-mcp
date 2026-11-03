@@ -48,6 +48,27 @@ async def test_validate_only_returns_adf_without_requests(mock_jira, monkeypatch
     assert requests == []
 
 
+async def test_preview_contains_emphasis_marks(mock_jira):
+    """Expose bold and italic ADF marks in the public comment preview."""
+    # Arrange
+    requests, _ = mock_jira
+
+    # Act
+    result = await invoke(
+        "add_issue_comment", {"issue": "DEMO-1", "body": "**bold** and _italic_", "validate_only": True}
+    )
+
+    # Assert
+    assert not result.is_error
+    nodes = result.structured_content["adf"]["content"][0]["content"]
+    assert nodes == [
+        {"type": "text", "text": "bold", "marks": [{"type": "strong"}]},
+        {"type": "text", "text": " and "},
+        {"type": "text", "text": "italic", "marks": [{"type": "em"}]},
+    ]
+    assert requests == []
+
+
 @pytest.mark.parametrize(
     "response",
     [

@@ -24,7 +24,7 @@ INSTRUCTIONS = (
     "Pass expected_assignee to change it only when the current assignee matches; null means unassigned, "
     "so taking an unassigned ticket needs one call. Find account IDs with get_current_user or search_users. "
     "To close a ticket, add a short closing comment with add_issue_comment, then call transition_issue. "
-    "add_issue_comment converts headings, flat bullet and ordered lists, backtick inline code, and explicit "
+    "add_issue_comment converts headings, flat lists, backtick inline code, bold and italic, and explicit "
     "http, https, or mailto links to ADF; other Markdown stays plain text. "
     "validate_only=true returns the ADF without any request. If a comment write fails or times out, "
     "check get_issue_comments before retrying. "
