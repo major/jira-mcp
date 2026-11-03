@@ -205,6 +205,10 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `list_fields` | Discover field IDs, names, and schemas globally or for one issue. |
 | `list_project_issue_types` | Discover issue types available for creation in a project. |
 | `search_issues` | Search ticket text and metadata with JQL, one page at a time. |
+| `search_filters` | Search visible saved filters by name, one page at a time. |
+| `list_my_filters` | List saved filters owned by the authenticated account, one page at a time. |
+| `create_filter` | **Writes.** Validate JQL and create a private saved filter, or preview the payload. |
+
 | `search_users` | Find users by name or email and return Jira account IDs. |
 | `get_issue_transitions` | Discover available transition IDs, target statuses, and transition-screen fields. |
 | `transition_issue` | Apply a transition and optional field values, including resolution. **Writes.** |
@@ -213,6 +217,14 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `create_issue_link` | Link two Jira issues with an explicit type and direction. **Writes.** |
 | `get_issue_remote_links` | List a ticket's remote web links. |
 | `create_issue_remote_link` | Create a web link unless its exact URL already exists. **Writes.** |
+
+Saved filter example: call `create_filter(name="My filter", jql="project = DEMO", validate_only=true)` to preview,
+then omit `validate_only` to create. Validation uses read-only POSTs. Creation checks the account's default share
+scope and one page of owned names, but neither check is atomic. Empty permissions are requested explicitly; a missing
+`editPermissions` in Jira's response does not guarantee edit privacy. If creation fails or is cancelled, inspect
+`search_filters(name="My filter")` before retrying. No automatic retry or cleanup occurs. Search includes filters owned
+by others; `list_my_filters()` only lists your own. Follow `next_start_at` for further pages. Sharing and updates are
+not supported.
 
 <details>
 <summary>Tool usage details</summary>
