@@ -134,13 +134,16 @@ async def test_board_optional_read_access_failure_degrades_safely(mock_jira, sta
 
 
 @pytest.mark.parametrize("failed_index", [2, 3])
-@pytest.mark.parametrize("failure", [401, 429, 500, "malformed"])
+@pytest.mark.parametrize("failure", [401, 429, 500, "malformed", "invalid_shape"])
 async def test_board_other_optional_read_errors_propagate(mock_jira, failed_index, failure):
     """Do not hide authorization, rate limit, server, or malformed response errors."""
     # Arrange
     requests, responses = mock_jira
     arranged = board_responses()
-    arranged[failed_index] = httpx2.Response(200 if failure == "malformed" else failure, text="test-secret")
+    if failure == "invalid_shape":
+        arranged[failed_index] = httpx2.Response(200, json={"unexpected": "test-secret"})
+    else:
+        arranged[failed_index] = httpx2.Response(200 if failure == "malformed" else failure, text="test-secret")
     responses.extend(arranged)
 
     # Act
