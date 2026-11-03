@@ -415,3 +415,170 @@ async def test_edit_preview_diff_separates_unterminated_lines(mock_jira):
     assert not result.is_error
     assert "-old\n+new\n" in result.structured_content["diff"]
     assert [request.method for request in requests] == ["GET"]
+
+
+@pytest.mark.parametrize("preview", [True, False])
+async def test_edit_raw_adf_preserves_native_diff_and_rich_content(mock_jira, edit_document, preview):
+    """Submit native diff text and preserve all other ADF values in preview and write."""
+    # Arrange
+    requests, responses = mock_jira
+    original = copy.deepcopy(edit_document)
+    original["content"].append(
+        {
+            "type": "bulletList",
+            "content": [
+                {
+                    "type": "listItem",
+                    "content": [
+                        {"type": "paragraph", "content": [{"type": "text", "text": line, "marks": [{"type": "code"}]}]}
+                    ],
+                }
+                for line in ["- old", "+  indented"]
+            ],
+        }
+    )
+    original["unknown"] = {"nullable": None, "values": [True, 3, "unchanged"]}
+    edited = copy.deepcopy(original)
+    edited["content"][1] = {
+        "type": "codeBlock",
+        "attrs": {"language": "diff"},
+        "content": [{"type": "text", "text": "- old\n+  indented\n"}],
+    }
+    responses.extend([httpx2.Response(200, json={"body": original}), httpx2.Response(204)])
+
+    # Act
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "body_adf": edited,
+            "expected_hash": document_hash(original),
+            "validate_only": preview,
+        },
+    )
+
+    # Assert
+    assert not result.is_error
+    assert [request.method for request in requests] == (["GET"] if preview else ["GET", "PUT"])
+    assert all(request.url.path == "/rest/api/3/issue/DEMO-1/comment/42" for request in requests)
+    if preview:
+        assert result.structured_content["adf"] == edited
+        assert result.structured_content["before_hash"] == document_hash(original)
+        assert result.structured_content["after_hash"] == document_hash(edited)
+        assert isinstance(result.structured_content["diff"], str)
+        assert isinstance(result.structured_content["diff_truncated"], bool)
+        assert result.structured_content["validate_only"] is True
+    else:
+        assert json.loads(requests[1].content) == {"body": edited}
+        assert result.structured_content == {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "updated": True,
+            "body_hash": document_hash(edited),
+        }
+
+
+async def test_edit_raw_adf_stale_hash_is_get_only(mock_jira, edit_document):
+    """Reject a stale source hash before submitting a raw replacement."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"body": edit_document}))
+
+    # Act
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "body_adf": edit_document,
+            "expected_hash": "0" * 64,
+        },
+    )
+
+    # Assert
+    assert result.is_error
+    assert "hash precondition" in result.content[0].text
+    assert [request.method for request in requests] == ["GET"]
+
+
+async def test_edit_raw_adf_structural_change_can_have_empty_diff(mock_jira, edit_document):
+    """Expose changed structure and hashes even when rendered text is identical."""
+    # Arrange
+    requests, responses = mock_jira
+    edited = copy.deepcopy(edit_document)
+    edited["extra"]["new"] = None
+    responses.append(httpx2.Response(200, json={"body": edit_document}))
+
+    # Act
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "body_adf": edited,
+            "validate_only": True,
+        },
+    )
+
+    # Assert
+    assert not result.is_error
+    assert result.structured_content["adf"] == edited
+    assert result.structured_content["diff"] == ""
+    assert result.structured_content["before_hash"] == document_hash(edit_document)
+    assert result.structured_content["after_hash"] == document_hash(edited)
+    assert document_hash(edit_document) != document_hash(edited)
+    assert [request.method for request in requests] == ["GET"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"body_adf": {}},
+        {"body_adf": {"type": "paragraph", "version": 1, "content": []}},
+        {"body_adf": {"type": "doc", "version": 2, "content": []}},
+        {"body_adf": {"type": "doc", "version": 1, "content": {}}},
+        {"body_adf": {"type": "doc", "version": 1, "content": [], "extra": "x" * 100_000}},
+        {"body_adf": {"type": "doc", "version": 1, "content": [], "extra": "é" * 50_000}},
+        {"body_adf": {"type": "doc", "version": 1, "content": []}, "body": "new"},
+        {"body_adf": {"type": "doc", "version": 1, "content": []}, "old_text": "old"},
+        {"body_adf": {"type": "doc", "version": 1, "content": []}, "new_text": "new"},
+        {"body_adf": {"type": "doc", "version": 1, "content": []}, "replace_all": True},
+    ],
+)
+async def test_edit_raw_adf_rejects_invalid_input_before_get(mock_jira, args):
+    """Reject invalid envelopes, byte sizes, and mixed modes without any HTTP request."""
+    # Arrange
+    requests, _ = mock_jira
+
+    # Act
+    result = await invoke("edit_issue_comment", {"issue": "DEMO-1", "comment_id": "42", **args})
+
+    # Assert
+    assert result.is_error
+    assert "comment ADF" in result.content[0].text or "mutually exclusive" in result.content[0].text
+    assert requests == []
+
+
+async def test_edit_raw_adf_uncertain_write_is_not_retried(mock_jira, edit_document):
+    """Send one PUT and give safe recovery guidance when its outcome is uncertain."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.extend([httpx2.Response(200, json={"body": edit_document}), httpx2.ReadTimeout("test-secret")])
+
+    # Act
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "body_adf": edit_document,
+        },
+    )
+
+    # Assert
+    assert result.is_error
+    assert "get_issue_comments" in result.content[0].text
+    assert "test-secret" not in result.content[0].text
+    assert [request.method for request in requests] == ["GET", "PUT"]
+    assert json.loads(requests[1].content) == {"body": edit_document}
