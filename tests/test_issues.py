@@ -1,6 +1,7 @@
 """Exercise issue, bulk fetch, search, and comment tools through the MCP and Jira boundaries 🎫."""
 
 import base64
+import hashlib
 import json
 
 import httpx2
@@ -1046,6 +1047,48 @@ async def test_comments_pagination_and_raw_adf(mock_jira):
     assert data["comments"][0]["body"] == {"text": "abc", "characters": 6, "truncated": True, "adf": body}
     assert data["comments"][0]["author"] == {"accountId": "abc", "displayName": "Reader"}
     assert requests[0].url.params["orderBy"] == "created"
+
+
+@pytest.mark.parametrize("include_hashes", [False, True])
+async def test_comment_hashes_are_opt_in_and_match_edit_guard(mock_jira, include_hashes):
+    """Expose the canonical full ADF hash only when explicitly requested."""
+    # Arrange
+    requests, responses = mock_jira
+    body = {
+        "version": 1,
+        "type": "doc",
+        "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "café", "marks": [{"type": "strong"}]}]},
+        ],
+    }
+    responses.append(
+        httpx2.Response(
+            200,
+            json={
+                "startAt": 0,
+                "total": 1,
+                "comments": [{"id": "42", "body": body}],
+            },
+        )
+    )
+    digest = hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(),
+    ).hexdigest()
+
+    # Act
+    args = {"issue": "DEMO-1"}
+    if include_hashes:
+        args["include_hashes"] = True
+    result = await invoke("get_issue_comments", args)
+
+    # Assert
+    assert not result.is_error
+    comment = result.structured_content["comments"][0]
+    if include_hashes:
+        assert comment["body_hash"] == digest
+    else:
+        assert "body_hash" not in comment
+    assert [request.method for request in requests] == ["GET"]
 
 
 @pytest.mark.parametrize(("start", "total"), [(0, 0), (8, 10)])

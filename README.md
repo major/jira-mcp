@@ -199,6 +199,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `update_issue` | **Writes.** Update core fields and incrementally add or remove labels, or preview the payload. |
 | `get_issue_comments` | Read one oldest-first page of ticket comments. |
 | `add_issue_comment` | Add a comment with simple Markdown, or preview its ADF with `validate_only`. **Writes.** |
+| `edit_issue_comment` | Replace a comment body or exact text, or preview the edit. **Writes.** |
 | `get_issues` | Fetch 1 through 20 known tickets in one request. |
 | `list_create_fields` | Discover create-field metadata for one project and issue type. |
 | `list_fields` | Discover field IDs, names, and schemas globally or for one issue. |
@@ -228,6 +229,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `get_issue` | Compact system fields, 12,000 description characters |
 | `get_issue_comments` | 20 comments, 4,000 characters per body |
 | `add_issue_comment` | Required `issue` and `body`, optional `visibility`, `validate_only` false |
+| `edit_issue_comment` | Required `issue` and `comment_id`, body or text replacement, `validate_only` false |
 | `get_issues` | Same fields as `get_issue`, 12,000 description characters per ticket |
 | `list_create_fields` | Required `project` and `issue_type_id`, 50 fields; optional `field_ids` and `required_only` |
 | `list_fields` | 50 fields, optional ID/name search, five-minute catalog cache |
@@ -775,6 +777,28 @@ times out, or is cancelled, the comment may already exist: check
 `get_issue_comments` before retrying.
 
 To close a ticket, add a short closing comment, then call `transition_issue`.
+
+### Edit a comment 💬
+
+Use `get_issue_comments` with `include_hashes: true` to obtain the full canonical ADF
+`body_hash`. Non-dictionary or absent bodies omit the hash. For example, preview:
+
+```json
+{"issue": "TEAM-123", "comment_id": "42", "old_text": "draft", "new_text": "final", "expected_hash": "<body_hash>", "validate_only": true}
+```
+
+Alternatively provide `body` to replace the whole comment using the same Markdown
+converter as adding a comment. Exact text matches must be within one text node;
+multiple matches require `replace_all: true`. Replacement newlines are literal.
+Source and output ADF are limited to 100,000 compact UTF-8 JSON bytes. Preview
+reads Jira and returns the edited ADF, before and after hashes, and a bounded,
+lossy rendered-text diff which is not a complete ADF comparison.
+
+The hash guard is not atomic and does not check visibility changes. Execution sends
+one PUT containing only the body and returns a hash of the submitted ADF, not a
+guarantee of persisted content. Comment edits do not use the issue edit setting.
+No write is retried automatically. If a write fails with an uncertain outcome,
+times out, or is cancelled, inspect `get_issue_comments` before retrying.
 
 ### Description and comment text
 

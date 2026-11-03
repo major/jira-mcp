@@ -1,5 +1,7 @@
 """Convert plain text or simple Markdown to ADF and render Jira content as readable text."""
 
+import hashlib
+import json
 import re
 from itertools import groupby
 from typing import Any
@@ -13,6 +15,12 @@ HEADING = re.compile(r"^(#{1,6}) (.*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
+
+
+def hash_adf(adf: dict[str, Any]) -> str:
+    """Hash the complete canonical UTF-8 ADF JSON document."""
+    encoded = json.dumps(adf, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def plain_text_to_adf(text: str) -> dict[str, Any]:

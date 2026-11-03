@@ -25,7 +25,7 @@ from jira_mcp.common import (
     validate_description_adf,
     validate_payload,
 )
-from jira_mcp.text import plain_text_to_adf, render_text
+from jira_mcp.text import hash_adf, plain_text_to_adf, render_text
 
 IssueSelection = Annotated[list[Issue], Field(min_length=1, max_length=20)]
 
@@ -426,12 +426,14 @@ async def get_issue_comments(  # noqa: PLR0913 - Explicit arguments keep MCP cal
     max_results: PageSize = 20,
     include_raw_adf: bool = False,
     text_limit: TextLimit = 4_000,
+    include_hashes: bool = False,
 ) -> dict[str, Any]:
     """Get one oldest-first page with author, dates, visibility, reply IDs, and body.
 
     Pass next_start_at back as start_at until null. Jira may clamp page sizes or
     hide restricted comments. Text limits apply to each body, not the full page.
     Raw ADF is optional and is not truncated when requested.
+    include_hashes adds a full canonical ADF body_hash for dictionary bodies; absent or non-ADF bodies omit it.
     Preserve parentId and jsdPublic when Jira supplies reply or public/internal status.
     """
     data = await get_client(ctx).get(
@@ -445,6 +447,8 @@ async def get_issue_comments(  # noqa: PLR0913 - Explicit arguments keep MCP cal
         if comment.author is not None:
             item["author"] = {key: comment.author[key] for key in ("accountId", "displayName") if key in comment.author}
         item["body"] = render_text(comment.body, limit=text_limit, include_raw=include_raw_adf)
+        if include_hashes and isinstance(comment.body, dict):
+            item["body_hash"] = hash_adf(comment.body)
         comments.append(item)
     return {
         "comments": comments,
