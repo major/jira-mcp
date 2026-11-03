@@ -1054,12 +1054,23 @@ async def test_comment_hashes_are_opt_in_and_match_edit_guard(mock_jira, include
     """Expose the canonical full ADF hash only when explicitly requested."""
     # Arrange
     requests, responses = mock_jira
-    body = {"version": 1, "type": "doc", "content": [
-        {"type": "paragraph", "content": [{"type": "text", "text": "café", "marks": [{"type": "strong"}]}]},
-    ]}
-    responses.append(httpx2.Response(200, json={
-        "startAt": 0, "total": 1, "comments": [{"id": "42", "body": body}],
-    }))
+    body = {
+        "version": 1,
+        "type": "doc",
+        "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "café", "marks": [{"type": "strong"}]}]},
+        ],
+    }
+    responses.append(
+        httpx2.Response(
+            200,
+            json={
+                "startAt": 0,
+                "total": 1,
+                "comments": [{"id": "42", "body": body}],
+            },
+        )
+    )
     digest = hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(),
     ).hexdigest()

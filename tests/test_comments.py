@@ -122,12 +122,19 @@ async def test_invalid_comment_arguments_do_not_request(mock_jira, args):
 def edit_document():
     """Provide rich ADF with fields that an edit must preserve."""
     return {
-        "type": "doc", "version": 1, "extra": {"text": "café"}, "content": [
-            {"type": "paragraph", "attrs": {"id": "café"}, "content": [
-                {"type": "text", "text": "café and café", "marks": [{"type": "strong"}]},
-                {"type": "text", "text": "café", "unknown": {"text": "café"}},
-                {"type": "emoji", "attrs": {"shortName": ":café:"}},
-            ]},
+        "type": "doc",
+        "version": 1,
+        "extra": {"text": "café"},
+        "content": [
+            {
+                "type": "paragraph",
+                "attrs": {"id": "café"},
+                "content": [
+                    {"type": "text", "text": "café and café", "marks": [{"type": "strong"}]},
+                    {"type": "text", "text": "café", "unknown": {"text": "café"}},
+                    {"type": "emoji", "attrs": {"shortName": ":café:"}},
+                ],
+            },
         ],
     }
 
@@ -149,10 +156,18 @@ async def test_edit_replaces_all_text_nodes_and_preserves_document(mock_jira, ed
     responses.extend([httpx2.Response(200, json={"body": edit_document}), httpx2.Response(200, text="not json")])
 
     # Act
-    result = await invoke("edit_issue_comment", {
-        "issue": "DEMO-1", "comment_id": "42", "old_text": "café", "new_text": "tea",
-        "replace_all": True, "validate_only": preview, "expected_hash": document_hash(edit_document),
-    })
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "old_text": "café",
+            "new_text": "tea",
+            "replace_all": True,
+            "validate_only": preview,
+            "expected_hash": document_hash(edit_document),
+        },
+    )
 
     # Assert
     assert not result.is_error
@@ -168,7 +183,10 @@ async def test_edit_replaces_all_text_nodes_and_preserves_document(mock_jira, ed
     else:
         assert json.loads(requests[1].content) == {"body": expected}
         assert result.structured_content == {
-            "issue": "DEMO-1", "comment_id": "42", "updated": True, "body_hash": document_hash(expected),
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "updated": True,
+            "body_hash": document_hash(expected),
         }
 
 
@@ -182,9 +200,15 @@ async def test_edit_rejects_ambiguous_matches(mock_jira, edit_document, old_text
     responses.append(httpx2.Response(200, json={"body": edit_document}))
 
     # Act
-    result = await invoke("edit_issue_comment", {
-        "issue": "DEMO-1", "comment_id": "42", "old_text": old_text, "new_text": "tea",
-    })
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "old_text": old_text,
+            "new_text": "tea",
+        },
+    )
 
     # Assert
     assert result.is_error
@@ -198,9 +222,15 @@ async def test_edit_rejects_match_spanning_nodes(mock_jira, edit_document):
     responses.append(httpx2.Response(200, json={"body": edit_document}))
 
     # Act
-    result = await invoke("edit_issue_comment", {
-        "issue": "DEMO-1", "comment_id": "42", "old_text": "café and cafécafé", "new_text": "x",
-    })
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "old_text": "café and cafécafé",
+            "new_text": "x",
+        },
+    )
 
     # Assert
     assert result.is_error
@@ -218,10 +248,17 @@ async def test_edit_deletes_empty_text_node(mock_jira, edit_document):
     responses.append(httpx2.Response(200, json={"body": edit_document}))
 
     # Act
-    result = await invoke("edit_issue_comment", {
-        "issue": "DEMO-1", "comment_id": "42", "old_text": "café", "new_text": "",
-        "replace_all": True, "validate_only": True,
-    })
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "old_text": "café",
+            "new_text": "",
+            "replace_all": True,
+            "validate_only": True,
+        },
+    )
 
     # Assert
     assert not result.is_error
@@ -244,11 +281,19 @@ async def test_edit_full_body_converts_markdown(mock_jira, edit_document):
     assert json.loads(requests[1].content) == {"body": markdown_to_adf(BODY)}
 
 
-@pytest.mark.parametrize("args", [
-    {}, {"body": "x", "old_text": "a", "new_text": "b"}, {"old_text": "", "new_text": "x"},
-    {"old_text": "x"}, {"new_text": "x"}, {"body": "x", "replace_all": True},
-    {"body": "x", "expected_hash": "A" * 64}, {"body": "x", "expected_hash": "bad"},
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {},
+        {"body": "x", "old_text": "a", "new_text": "b"},
+        {"old_text": "", "new_text": "x"},
+        {"old_text": "x"},
+        {"new_text": "x"},
+        {"body": "x", "replace_all": True},
+        {"body": "x", "expected_hash": "A" * 64},
+        {"body": "x", "expected_hash": "bad"},
+    ],
+)
 async def test_edit_invalid_arguments_do_not_request(mock_jira, args):
     """Reject invalid edit modes and hash syntax locally."""
     # Arrange
@@ -262,11 +307,14 @@ async def test_edit_invalid_arguments_do_not_request(mock_jira, args):
     assert requests == []
 
 
-@pytest.mark.parametrize(("body", "expected_hash"), [
-    ({"type": "doc", "version": 1, "content": []}, "0" * 64),
-    ({"type": "paragraph", "content": []}, None),
-    ("not ADF", None),
-])
+@pytest.mark.parametrize(
+    ("body", "expected_hash"),
+    [
+        ({"type": "doc", "version": 1, "content": []}, "0" * 64),
+        ({"type": "paragraph", "content": []}, None),
+        ("not ADF", None),
+    ],
+)
 async def test_edit_rejects_hash_mismatch_or_malformed_source(mock_jira, body, expected_hash):
     """Reject a stale guard or invalid ADF without sending a write."""
     # Arrange
@@ -274,20 +322,29 @@ async def test_edit_rejects_hash_mismatch_or_malformed_source(mock_jira, body, e
     responses.append(httpx2.Response(200, json={"body": body}))
 
     # Act
-    result = await invoke("edit_issue_comment", {
-        "issue": "DEMO-1", "comment_id": "42", "body": "new", "expected_hash": expected_hash,
-    })
+    result = await invoke(
+        "edit_issue_comment",
+        {
+            "issue": "DEMO-1",
+            "comment_id": "42",
+            "body": "new",
+            "expected_hash": expected_hash,
+        },
+    )
 
     # Assert
     assert result.is_error
     assert [request.method for request in requests] == ["GET"]
 
 
-@pytest.mark.parametrize(("response", "uncertain"), [
-    (httpx2.Response(403, text="test-secret"), False),
-    (httpx2.ReadTimeout("test-secret"), True),
-    (httpx2.Response(500, text="test-secret"), True),
-])
+@pytest.mark.parametrize(
+    ("response", "uncertain"),
+    [
+        (httpx2.Response(403, text="test-secret"), False),
+        (httpx2.ReadTimeout("test-secret"), True),
+        (httpx2.Response(500, text="test-secret"), True),
+    ],
+)
 async def test_edit_put_errors_are_safe_and_not_retried(mock_jira, edit_document, response, uncertain):
     """Report permissions or uncertain writes without leaking upstream errors or retrying."""
     # Arrange
