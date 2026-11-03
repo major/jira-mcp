@@ -11,7 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from jira_mcp.app import get_client, mcp
 from jira_mcp.client import JiraHTTPError
-from jira_mcp.common import CREATE, WRITE, Issue, IssueId, NonemptyString, validate_description_adf, validate_payload
+from jira_mcp.common import (
+    ADF_MAX_BYTES,
+    CREATE,
+    WRITE,
+    Issue,
+    IssueId,
+    NonemptyString,
+    validate_description_adf,
+    validate_payload,
+)
 from jira_mcp.text import hash_adf, markdown_to_adf, render_text
 
 # Jira Cloud limits comments to 32,767 characters of stored ADF, so this local cap is approximate.
@@ -60,6 +69,12 @@ def _replace_text(adf: dict[str, Any], old: str, new: str, *, replace_all: bool)
     if count > 1 and not replace_all:
         msg = "Text occurs more than once; use replace_all to replace every match."
         raise ToolError(msg)
+    # Bound allocation before str.replace; serialized ADF gets its exact size check afterward.
+    projected_bytes = sum(len(node["text"].encode("utf-8")) for _, node in nodes)
+    projected_bytes += count * (len(new.encode("utf-8")) - len(old.encode("utf-8")))
+    if projected_bytes > ADF_MAX_BYTES:
+        msg = "Replacement would exceed the 100,000-byte comment ADF limit."
+        raise ToolError(msg)
     for parent, node in nodes:
         if old in node["text"]:
             node["text"] = node["text"].replace(old, new)
@@ -73,7 +88,10 @@ def _comment_diff(before: dict[str, Any], after: dict[str, Any]) -> tuple[str, b
     left = render_text(before, limit=DIFF_LIMIT, include_raw=False)
     right = render_text(after, limit=DIFF_LIMIT, include_raw=False)
     diff = "".join(
-        difflib.unified_diff(left["text"].splitlines(keepends=True), right["text"].splitlines(keepends=True))
+        difflib.unified_diff(
+            [line + "\n" for line in left["text"].splitlines()],
+            [line + "\n" for line in right["text"].splitlines()],
+        )
     )
     return diff[:DIFF_LIMIT], left["truncated"] or right["truncated"] or len(diff) > DIFF_LIMIT
 
