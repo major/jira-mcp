@@ -106,11 +106,14 @@ def _inline_tokens(line: str, *, in_link: bool) -> tuple[list[tuple[str, str, An
     """Scan inline tokens and pair only properly nested delimiter runs."""
     tokens: list[tuple[str, str, Any]] = []
     stack: list[int] = []
+    openings: dict[str, list[int]] = {marker: [] for marker in ("*", "**", "_", "__")}
     pairs: dict[int, int] = {}
     parts = INLINE_CODE.split(line)
+    offset = 0
     for position, part in enumerate(parts):
         if position % 2:
             tokens.append(("code", part, None))
+            offset += len(part) + 2
             continue
         start = 0
         for match in INLINE_TOKEN.finditer(part):
@@ -121,22 +124,30 @@ def _inline_tokens(line: str, *, in_link: bool) -> tuple[list[tuple[str, str, An
             elif match.group(1) is not None:
                 tokens.append(("text", value, None))
             else:
-                previous = part[match.start() - 1] if match.start() else ""
-                following = part[match.end()] if match.end() < len(part) else ""
+                beginning, end = offset + match.start(), offset + match.end()
+                previous = line[beginning - 1] if beginning else ""
+                following = line[end] if end < len(line) else ""
                 intraword = value[0] == "_" and previous.isalnum() and following.isalnum()
                 can_open = bool(following and not following.isspace()) and not intraword
                 can_close = bool(previous and not previous.isspace()) and not intraword
                 index = len(tokens)
                 tokens.append(("delimiter", value, None))
-                if len(value) in (1, 2):
-                    if can_close and stack and tokens[stack[-1]][1] == value:
-                        opening = stack.pop()
+                if value in openings:
+                    if can_close and openings[value]:
+                        opening = openings[value][-1]
+                        # Unmatched inner openers stay literal, rather than blocking the outer pair.
+                        while stack[-1] != opening:
+                            openings[tokens[stack.pop()][1]].pop()
+                        stack.pop()
+                        openings[value].pop()
                         pairs[opening] = index
                         pairs[index] = opening
                     elif can_open:
                         stack.append(index)
+                        openings[value].append(index)
             start = match.end()
         tokens.append(("text", part[start:], None))
+        offset += len(part)
     return tokens, pairs
 
 

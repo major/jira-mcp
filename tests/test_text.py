@@ -191,6 +191,19 @@ def test_markdown_extended_subset():
         ("* spaced* and *end *", [_text("* spaced* and *end *")]),
         ("***unsupported***", [_text("***unsupported***")]),
         (
+            "**a`code`**",
+            [{"type": "text", "text": "a", "marks": [{"type": "strong"}]}, _text("code", code=True)],
+        ),
+        ("**`code`**", [_text("code", code=True)]),
+        (
+            "**outer _unfinished end**",
+            [{"type": "text", "text": "outer _unfinished end", "marks": [{"type": "strong"}]}],
+        ),
+        (
+            "**outer _cross** end_",
+            [{"type": "text", "text": "outer _cross", "marks": [{"type": "strong"}]}, _text(" end_")],
+        ),
+        (
             "**outer _inner_ end**",
             [
                 {"type": "text", "text": "outer ", "marks": [{"type": "strong"}]},
