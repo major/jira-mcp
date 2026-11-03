@@ -215,6 +215,25 @@ async def test_missing_edit_permissions_is_accepted(mock_jira):
     assert len(requests) == 6
 
 
+@pytest.mark.parametrize("changes", [{"sharePermissions": None}, {"editPermissions": None}, {"name": None}])
+async def test_created_identity_survives_invalid_privacy_or_response(mock_jira, changes):
+    """Report the known ID without leaking malformed response content."""
+    # Arrange
+    requests, responses = mock_jira
+    preflight(responses)
+    responses.append(httpx2.Response(200, json={**CREATED, **changes}))
+
+    # Act
+    result = await invoke("create_filter", ARGS)
+
+    # Assert
+    assert result.is_error
+    assert "42" in result.content[0].text
+    assert "search_filters" in result.content[0].text
+    assert "No filter was created" not in result.content[0].text
+    assert len(requests) == 6
+
+
 @pytest.mark.parametrize(
     "response",
     [
