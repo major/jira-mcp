@@ -210,7 +210,6 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `get_board` | Get board columns, statuses, saved filter, and scope. |
 | `list_my_filters` | List saved filters owned by the authenticated account, one page at a time. |
 | `create_filter` | **Writes.** Validate JQL and create a private saved filter, or preview the payload. |
-
 | `search_users` | Find users by name or email and return Jira account IDs. |
 | `get_issue_transitions` | Discover available transition IDs, target statuses, and transition-screen fields. |
 | `transition_issue` | Apply a transition and optional field values, including resolution. **Writes.** |
@@ -220,7 +219,8 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `get_issue_remote_links` | List a ticket's remote web links. |
 | `create_issue_remote_link` | Create a web link unless its exact URL already exists. **Writes.** |
 
-Board example: call `get_board(board_id=7)` and `get_filter(filter_id="42")` to inspect the board and its filter.
+Resolve a board link with `get_board` before searching instead of guessing its project scope. For example, call
+`get_board(board_id=7)` to inspect a board and its filter, or `get_filter(filter_id="42")` for just the saved filter.
 Board `jql` represents saved-filter membership plus the configured subquery, not exact UI membership. Column/status
 mapping, active sprint, quick filters, and URL search can restrict results further. Ordering is not preserved in this JQL;
 the saved filter's original JQL is returned unchanged. Inaccessible filters or status names are reported separately.
@@ -254,6 +254,11 @@ not supported.
 | `list_fields` | 50 fields, optional ID/name search, five-minute catalog cache |
 | `list_project_issue_types` | Required `project`, 50 issue types |
 | `search_issues` | 20 tickets, 2,000 description characters per ticket |
+| `search_filters` | Required `name`, 20 visible filters per page |
+| `list_my_filters` | 20 owned filters per page |
+| `create_filter` | Required `name` and `jql`, optional `description`, `validate_only` false |
+| `get_filter` | Required `filter_id`, includes saved JQL and owner display name |
+| `get_board` | Required `board_id`, includes saved-filter scope and column/status mappings |
 | `search_users` | 20 users, required `query` |
 | `get_issue_transitions` | Required `issue`, includes transition field metadata |
 | `transition_issue` | Required `issue` and `transition_id`, optional `fields` |
