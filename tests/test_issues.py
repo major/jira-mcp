@@ -1250,7 +1250,7 @@ async def test_update_invalid_description_format_is_local(mock_jira, options):
     """Reject incompatible or invalid format arguments before any Jira request."""
     requests, _ = mock_jira
 
-    result = await invoke("update_issue", {"issue": "DEMO-1", "validate_only": True, **options})
+    result = await invoke("update_issue", {"issue": "DEMO-1", "summary": "Updated", "validate_only": True, **options})
 
     assert result.is_error
     assert not requests

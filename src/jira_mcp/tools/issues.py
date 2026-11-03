@@ -1,6 +1,6 @@
 """Read and update Jira issues, bulk issue fetches, JQL search results, and comments."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 lazy from collections.abc import Sequence
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
@@ -25,7 +25,7 @@ from jira_mcp.common import (
     validate_description_adf,
     validate_payload,
 )
-from jira_mcp.text import hash_adf, plain_text_to_adf, render_text
+from jira_mcp.text import hash_adf, markdown_to_adf, plain_text_to_adf, render_text
 
 IssueSelection = Annotated[list[Issue], Field(min_length=1, max_length=20)]
 
@@ -71,6 +71,7 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
     *,
     summary: Summary | None = None,
     description: Description | None = None,
+    description_format: Literal["plain", "markdown"] = "plain",
     description_adf: dict[str, Any] | None = None,
     labels_add: Labels | None = None,
     labels_remove: Labels | None = None,
@@ -81,11 +82,14 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
     """Update core issue fields, or preview the exact payload without Jira requests.
 
     Omitted or null arguments leave fields untouched. Summary and priority replace
-    their fields. Description is plain text, converted like create_issue, or use
+    their fields. Description defaults to plain text, or set description_format to
+    markdown for the limited comment syntax and the same size limits as create_issue.
+    Markdown requires description, including an empty string. Alternatively use
     mutually exclusive description_adf for unchanged raw ADF with the same limits.
     Descriptions replace rather than append; an empty plain description clears its
-    content. Labels are incremental additions or removals, deduplicated in order;
-    overlapping additions and removals are rejected. At least one change is required.
+    content, as does an empty Markdown description. Labels are incremental additions
+    or removals, deduplicated in order; overlapping additions and removals are rejected.
+    At least one change is required.
 
     Preview does not check the precondition or Jira permissions. Edits require
     JIRA_ENABLE_ISSUE_EDITS=true and a server restart. The optional summary guard
@@ -102,6 +106,9 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
     if description is not None and description_adf is not None:
         msg = "description and description_adf are mutually exclusive."
         raise ToolError(msg)
+    if description_format == "markdown" and description is None:
+        msg = "description is required when description_format is markdown."
+        raise ToolError(msg)
     added = list(dict.fromkeys(labels_add or []))
     removed = list(dict.fromkeys(labels_remove or []))
     if set(added) & set(removed):
@@ -113,7 +120,11 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
     if description_adf is not None:
         fields["description"] = validate_description_adf(description_adf)
     elif description is not None:
-        fields["description"] = plain_text_to_adf(description)
+        fields["description"] = (
+            validate_description_adf(markdown_to_adf(description))
+            if description_format == "markdown"
+            else plain_text_to_adf(description)
+        )
     if priority_id is not None:
         fields["priority"] = {"id": priority_id}
     operations = [{"add": label} for label in added] + [{"remove": label} for label in removed]

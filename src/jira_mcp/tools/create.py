@@ -1,6 +1,6 @@
 """Discover creation metadata and create Jira issues when explicitly enabled."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
 from fastmcp.exceptions import ToolError
@@ -25,7 +25,7 @@ from jira_mcp.common import (
     validate_payload,
 )
 from jira_mcp.create_metadata import CreateField, CreateFieldPage, CreateIssueTypePage, create_field_problems
-from jira_mcp.text import plain_text_to_adf
+from jira_mcp.text import markdown_to_adf, plain_text_to_adf
 
 Project = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*|[1-9][0-9]*)$", max_length=255)]
 
@@ -171,13 +171,14 @@ def create_failure(exc: ToolError) -> ToolError:
 
 
 @mcp.tool(annotations=CREATE)
-async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls self-contained.
+async def create_issue(  # noqa: C901, PLR0913 - Explicit arguments and checks keep MCP calls self-contained.
     project: Project,
     issue_type_id: IssueId,
     summary: Summary,
     ctx: Context,
     *,
     description: Description | None = None,
+    description_format: Literal["plain", "markdown"] = "plain",
     description_adf: dict[str, Any] | None = None,
     labels: Labels | None = None,
     priority_id: IssueId | None = None,
@@ -189,9 +190,12 @@ async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls sel
     """Create one Jira issue after an explicit user request, or preview it with validate_only.
 
     Use a project key or numeric ID and an issue type ID from creation metadata.
-    Summary is required. Description is plain text up to 100,000 characters,
-    converted to ADF without Markdown parsing. Alternatively, description_adf is
-    an ADF document with compact UTF-8 JSON up to 100,000 bytes. Only its envelope
+    Summary is required. Description is up to 100,000 characters, including empty.
+    By default it is plain text without Markdown parsing. Set description_format to
+    markdown to use the same limited syntax as comments; description is required
+    and the generated compact UTF-8 ADF must be at most 100,000 bytes.
+    Alternatively, description_adf is an ADF document with compact UTF-8 JSON up to
+    100,000 bytes. Only its envelope
     is validated; nested ADF is passed unchanged. These inputs are mutually exclusive.
     Additional system or custom fields retain their original JSON;
     provide ADF for any other rich-text fields. Core fields cannot be overridden.
@@ -216,11 +220,22 @@ async def create_issue(  # noqa: PLR0913 - Explicit arguments keep MCP calls sel
     if description is not None and description_adf is not None:
         msg = "description and description_adf are mutually exclusive."
         raise ToolError(msg)
+    if description_format == "markdown" and description is None:
+        msg = "description is required when description_format is markdown."
+        raise ToolError(msg)
+
+    converted_description = None
+    if description_adf is not None:
+        converted_description = validate_description_adf(description_adf)
+    elif description is not None:
+        converted_description = (
+            validate_description_adf(markdown_to_adf(description))
+            if description_format == "markdown"
+            else plain_text_to_adf(description)
+        )
 
     optional = {
-        "description": validate_description_adf(description_adf)
-        if description_adf is not None
-        else (None if description is None else plain_text_to_adf(description)),
+        "description": converted_description,
         "labels": labels,
         "priority": None if priority_id is None else {"id": priority_id},
         "assignee": None if assignee_account_id is None else {"accountId": assignee_account_id},

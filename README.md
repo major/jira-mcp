@@ -273,8 +273,9 @@ environment and restart it to enable issue creation. Falling back to another or 
 this server's gate; check that server's own controls before using it.
 
 Comments support headings, flat bullet and ordered lists, inline code, bold and italic, and explicit links with
-`http`, `https`, or `mailto` schemes. Other Markdown stays literal. Issue creation accepts either
-plain-text `description` or raw `description_adf`; it does not parse Markdown.
+`http`, `https`, or `mailto` schemes. Other Markdown stays literal. Issue creation and updates accept
+plain-text `description` by default, the same limited Markdown with `description_format: "markdown"`,
+or raw `description_adf`. Text extraction is not a lossless Markdown roundtrip.
 
 For `list_create_fields`, `field_ids` selects by `fieldId` or `key`, `required_only` selects
 required fields, and together they select both. Filtering applies to each Jira page. Follow
@@ -658,6 +659,9 @@ The project can be a key or numeric ID. `summary` must be a single line, contain
 non-whitespace text, and be at most 255 characters. An optional `description` is plain text up to
 100,000 characters, including an empty string. It is converted to minimal ADF,
 without interpreting Markdown. CRLF and CR become LF; blank lines are preserved.
+Set `description_format` to `markdown` to use the same limited syntax as comments.
+This requires `description` (an empty string is accepted), and the generated compact
+UTF-8 ADF JSON must be at most 100,000 bytes as well as the source character limit.
 Alternatively, supply `description_adf` as a raw ADF document. It is mutually
 exclusive with `description`, including an empty description. The server checks
 only the document envelope (`type` is `doc`, integer `version` is 1, and `content`
@@ -744,9 +748,10 @@ Jira notifications or automation and require the Jira Edit issues permission.
 
 Optional `summary`, `description`, `description_adf`, and `priority_id` replace only
 the corresponding fields. Omitted or null arguments leave fields unchanged.
-Descriptions use the same plain-text conversion or raw ADF envelope and size checks
-as `create_issue`; the two description inputs are mutually exclusive. An empty
-plain-text description clears its content. Replacing a description is not an append.
+Descriptions use the same plain-text default, optional `description_format: "markdown"`,
+or raw ADF envelope and size checks as `create_issue`; the two description inputs are
+mutually exclusive. Markdown requires `description`, even when updating other fields.
+An empty plain-text or Markdown description clears its content. Replacing a description is not an append.
 Label additions and removals are incremental, so unrelated labels are preserved.
 Duplicate labels are collapsed, overlap between additions and removals is rejected,
 and empty label lists alone do not count as a change. At least one change is required.
