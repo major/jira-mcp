@@ -12,6 +12,7 @@ BULLET = "- "
 HEADING = re.compile(r"^(#{1,6}) (.*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
+INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
 
 
 def plain_text_to_adf(text: str) -> dict[str, Any]:
@@ -30,7 +31,7 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
 def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
-    Support headings, flat bullet and ordered lists, inline code, and explicit safe links.
+    Support headings, flat lists, inline code, emphasis, and explicit safe links.
     Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
@@ -81,29 +82,92 @@ def _paragraph(lines: list[str]) -> dict[str, Any]:
     for index, line in enumerate(lines):
         if index:
             content.append({"type": "hardBreak"})
-        for position, part in enumerate(INLINE_CODE.split(line)):
-            if part:
-                if position % 2:
-                    content.append({"type": "text", "text": part, "marks": [{"type": "code"}]})
-                else:
-                    start = 0
-                    for match in LINK.finditer(part):
-                        if match.start() > start:
-                            content.append({"type": "text", "text": part[start : match.start()]})
-                        content.append(
-                            {
-                                "type": "text",
-                                "text": match.group(1),
-                                "marks": [{"type": "link", "attrs": {"href": match.group(2)}}],
-                            }
-                        )
-                        start = match.end()
-                    if start < len(part):
-                        content.append({"type": "text", "text": part[start:]})
+        _inline(line, content)
     paragraph: dict[str, Any] = {"type": "paragraph"}
     if content:
         paragraph["content"] = content
     return paragraph
+
+
+def _append_text(content: list[dict[str, Any]], text: str, marks: list[dict[str, Any]]) -> None:
+    """Append text, joining adjacent nodes with the same marks."""
+    if not text:
+        return
+    if content and content[-1].get("type") == "text" and content[-1].get("marks", []) == marks:
+        content[-1]["text"] += text
+        return
+    node: dict[str, Any] = {"type": "text", "text": text}
+    if marks:
+        node["marks"] = marks
+    content.append(node)
+
+
+def _inline_tokens(line: str, *, in_link: bool) -> tuple[list[tuple[str, str, Any]], dict[int, int]]:
+    """Scan inline tokens and pair only properly nested delimiter runs."""
+    tokens: list[tuple[str, str, Any]] = []
+    stack: list[int] = []
+    pairs: dict[int, int] = {}
+    parts = INLINE_CODE.split(line)
+    for position, part in enumerate(parts):
+        if position % 2:
+            tokens.append(("code", part, None))
+            continue
+        start = 0
+        for match in INLINE_TOKEN.finditer(part):
+            tokens.append(("text", part[start : match.start()], None))
+            value = match.group()
+            if match.group(1) is not None and not in_link:
+                tokens.append(("link", match.group(1), match.group(2)))
+            elif match.group(1) is not None:
+                tokens.append(("text", value, None))
+            else:
+                previous = part[match.start() - 1] if match.start() else ""
+                following = part[match.end()] if match.end() < len(part) else ""
+                intraword = value[0] == "_" and previous.isalnum() and following.isalnum()
+                can_open = bool(following and not following.isspace()) and not intraword
+                can_close = bool(previous and not previous.isspace()) and not intraword
+                index = len(tokens)
+                tokens.append(("delimiter", value, None))
+                if len(value) in (1, 2):
+                    if can_close and stack and tokens[stack[-1]][1] == value:
+                        opening = stack.pop()
+                        pairs[opening] = index
+                        pairs[index] = opening
+                    elif can_open:
+                        stack.append(index)
+            start = match.end()
+        tokens.append(("text", part[start:], None))
+    return tokens, pairs
+
+
+def _inline(line: str, content: list[dict[str, Any]], link: str | None = None) -> None:
+    """Render paired inline tokens, keeping code and link destinations opaque."""
+    tokens, pairs = _inline_tokens(line, in_link=link is not None)
+    active: dict[str, int] = {"strong": 0, "em": 0}
+    for index, (kind, value, extra) in enumerate(tokens):
+        if kind == "delimiter" and index in pairs:
+            mark = "strong" if value in ("**", "__") else "em"
+            active[mark] += 1 if pairs[index] > index else -1
+            continue
+        marks: list[dict[str, Any]] = [{"type": mark} for mark in ("strong", "em") if active[mark]]
+        if link is not None:
+            marks.append({"type": "link", "attrs": {"href": link}})
+        if kind == "code":
+            _append_text(content, value, [{"type": "code"}])
+        elif kind == "link":
+            label: list[dict[str, Any]] = []
+            _inline(value, label, extra)
+            for node in label:
+                label_marks = node.get("marks", [])
+                combined = [
+                    {"type": mark}
+                    for mark in ("strong", "em")
+                    if active[mark] or any(item["type"] == mark for item in label_marks)
+                ]
+                combined.extend(item for item in label_marks if item["type"] == "link")
+                _append_text(content, node["text"], combined)
+        else:
+            _append_text(content, value, marks)
 
 
 def render_text(body: Any, *, limit: int, include_raw: bool, offset: int = 0) -> dict[str, Any]:

@@ -189,6 +189,7 @@ def test_markdown_extended_subset():
         ("a * b * c", [_text("a * b * c")]),
         ("unmatched **marker", [_text("unmatched **marker")]),
         ("* spaced* and *end *", [_text("* spaced* and *end *")]),
+        ("***unsupported***", [_text("***unsupported***")]),
         (
             "**outer _inner_ end**",
             [
