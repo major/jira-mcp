@@ -380,3 +380,38 @@ async def test_edit_get_failure_does_not_warn_about_unknown_write(mock_jira):
     assert "test-secret" not in result.content[0].text
     assert "get_issue_comments" not in result.content[0].text
     assert [request.method for request in requests] == ["GET"]
+
+
+async def test_edit_rejects_expansion_before_replacement(mock_jira):
+    """Reject projected oversized replacements before allocating the expanded text."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"body": markdown_to_adf("aaaa")}))
+
+    # Act
+    result = await invoke(
+        "edit_issue_comment",
+        {"issue": "DEMO-1", "comment_id": "42", "old_text": "a", "new_text": "b" * 32_767, "replace_all": True},
+    )
+
+    # Assert
+    assert result.is_error
+    assert "Replacement would exceed" in result.content[0].text
+    assert [request.method for request in requests] == ["GET"]
+
+
+async def test_edit_preview_diff_separates_unterminated_lines(mock_jira):
+    """Show removed and added single-paragraph text on separate diff lines."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={"body": markdown_to_adf("old")}))
+
+    # Act
+    result = await invoke(
+        "edit_issue_comment", {"issue": "DEMO-1", "comment_id": "42", "body": "new", "validate_only": True}
+    )
+
+    # Assert
+    assert not result.is_error
+    assert "-old\n+new\n" in result.structured_content["diff"]
+    assert [request.method for request in requests] == ["GET"]
