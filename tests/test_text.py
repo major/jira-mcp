@@ -140,6 +140,74 @@ def test_markdown_extended_subset():
     ]
 
 
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("**bold**", [{"type": "text", "text": "bold", "marks": [{"type": "strong"}]}]),
+        ("__bold__", [{"type": "text", "text": "bold", "marks": [{"type": "strong"}]}]),
+        ("*italic*", [{"type": "text", "text": "italic", "marks": [{"type": "em"}]}]),
+        ("_italic_", [{"type": "text", "text": "italic", "marks": [{"type": "em"}]}]),
+        (
+            "**Pipeline:** [#123](https://example.com/p/123) passed",
+            [
+                {"type": "text", "text": "Pipeline:", "marks": [{"type": "strong"}]},
+                _text(" "),
+                {
+                    "type": "text",
+                    "text": "#123",
+                    "marks": [{"type": "link", "attrs": {"href": "https://example.com/p/123"}}],
+                },
+                _text(" passed"),
+            ],
+        ),
+        (
+            "**[label](https://example.com/a_b)**",
+            [
+                {
+                    "type": "text",
+                    "text": "label",
+                    "marks": [{"type": "strong"}, {"type": "link", "attrs": {"href": "https://example.com/a_b"}}],
+                }
+            ],
+        ),
+        (
+            "[**label**](https://example.com)",
+            [
+                {
+                    "type": "text",
+                    "text": "label",
+                    "marks": [{"type": "strong"}, {"type": "link", "attrs": {"href": "https://example.com"}}],
+                }
+            ],
+        ),
+        ("`**not bold** _or italic_`", [_text("**not bold** _or italic_", code=True)]),
+        (
+            "**bold** `__init__`",
+            [{"type": "text", "text": "bold", "marks": [{"type": "strong"}]}, _text(" "), _text("__init__", code=True)],
+        ),
+        ("snake_case_identifier foo__bar__baz", [_text("snake_case_identifier foo__bar__baz")]),
+        ("a * b * c", [_text("a * b * c")]),
+        ("unmatched **marker", [_text("unmatched **marker")]),
+        ("* spaced* and *end *", [_text("* spaced* and *end *")]),
+        (
+            "**outer _inner_ end**",
+            [
+                {"type": "text", "text": "outer ", "marks": [{"type": "strong"}]},
+                {"type": "text", "text": "inner", "marks": [{"type": "strong"}, {"type": "em"}]},
+                {"type": "text", "text": " end", "marks": [{"type": "strong"}]},
+            ],
+        ),
+    ],
+)
+def test_markdown_emphasis(markdown, content):
+    """Convert paired emphasis without changing code, identifiers, or unmatched markers."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": [_para(*content)]}
+
+
 @pytest.mark.parametrize("level", range(1, 7))
 def test_markdown_heading_levels(level):
     """Support each ADF heading level."""
