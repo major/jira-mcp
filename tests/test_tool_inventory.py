@@ -23,6 +23,7 @@ TOOLS = {
     "search_issues": "read",
     "get_issue_comments": "read",
     "add_issue_comment": "create",
+    "edit_issue_comment": "write",
     "list_fields": "read",
     "list_project_issue_types": "read",
     "list_create_fields": "read",

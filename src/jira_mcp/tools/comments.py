@@ -1,5 +1,8 @@
-"""Add comments to Jira issues."""
+"""Add and edit comments on Jira issues."""
 
+import copy
+import difflib
+from http import HTTPStatus
 from typing import Annotated, Any, Literal
 
 from fastmcp import Context  # noqa: TC002 - FastMCP resolves injected annotations at runtime.
@@ -7,14 +10,148 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, Field
 
 from jira_mcp.app import get_client, mcp
-from jira_mcp.common import CREATE, Issue, IssueId, NonemptyString, validate_payload
-from jira_mcp.text import markdown_to_adf
+from jira_mcp.client import JiraHTTPError
+from jira_mcp.common import CREATE, WRITE, Issue, IssueId, NonemptyString, validate_description_adf, validate_payload
+from jira_mcp.text import hash_adf, markdown_to_adf, render_text
 
 # Jira Cloud limits comments to 32,767 characters of stored ADF, so this local cap is approximate.
 CommentBody = Annotated[str, Field(min_length=1, max_length=32_767, pattern=r"\S")]
 
 
 COMMENT_UNCERTAIN = "The comment may already exist; check get_issue_comments before retrying."
+DIFF_LIMIT = 4000
+CommentHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+OldText = Annotated[str, Field(min_length=1, max_length=32_767)]
+NewText = Annotated[str, Field(max_length=32_767)]
+
+
+def _validate_comment_adf(adf: Any) -> dict[str, Any]:
+    """Validate the comment envelope and its compact UTF-8 size."""
+    if not isinstance(adf, dict):
+        msg = "Invalid comment ADF: expected an ADF document envelope."
+        raise ToolError(msg)
+    try:
+        return validate_description_adf(adf)
+    except ToolError as exc:
+        raise ToolError(str(exc).replace("description_adf", "comment ADF")) from None
+
+
+def _text_nodes(node: dict[str, Any]) -> list[tuple[list[Any], dict[str, Any]]]:
+    """Find text nodes only through ADF content arrays, retaining their parent lists."""
+    found = []
+    content = node.get("content")
+    if isinstance(content, list):
+        for child in content:
+            if isinstance(child, dict):
+                if child.get("type") == "text" and isinstance(child.get("text"), str):
+                    found.append((content, child))
+                else:
+                    found.extend(_text_nodes(child))
+    return found
+
+
+def _replace_text(adf: dict[str, Any], old: str, new: str, *, replace_all: bool) -> None:
+    """Replace exact nonoverlapping matches without changing unrelated ADF fields."""
+    nodes = _text_nodes(adf)
+    count = sum(node["text"].count(old) for _, node in nodes)
+    if not count:
+        msg = "Text not found in a single text node."
+        raise ToolError(msg)
+    if count > 1 and not replace_all:
+        msg = "Text occurs more than once; use replace_all to replace every match."
+        raise ToolError(msg)
+    for parent, node in nodes:
+        if old in node["text"]:
+            node["text"] = node["text"].replace(old, new)
+            if not node["text"]:
+                # Remove by identity, since distinct nodes can have equal values.
+                parent[:] = [child for child in parent if child is not node]
+
+
+def _comment_diff(before: dict[str, Any], after: dict[str, Any]) -> tuple[str, bool]:
+    """Create a bounded, lossy rendered-text diff for preview."""
+    left = render_text(before, limit=DIFF_LIMIT, include_raw=False)
+    right = render_text(after, limit=DIFF_LIMIT, include_raw=False)
+    diff = "".join(
+        difflib.unified_diff(left["text"].splitlines(keepends=True), right["text"].splitlines(keepends=True))
+    )
+    return diff[:DIFF_LIMIT], left["truncated"] or right["truncated"] or len(diff) > DIFF_LIMIT
+
+
+@mcp.tool(annotations=WRITE)
+async def edit_issue_comment(  # noqa: PLR0913
+    issue: Issue,
+    comment_id: IssueId,
+    ctx: Context,
+    *,
+    expected_hash: CommentHash | None = None,
+    body: CommentBody | None = None,
+    old_text: OldText | None = None,
+    new_text: NewText | None = None,
+    replace_all: bool = False,
+    validate_only: bool = False,
+) -> dict[str, Any]:
+    """Edit a comment by replacing its Markdown body or exact text within ADF text nodes.
+
+    Text replacements preserve newlines literally and cannot span nodes. Preview performs
+    a GET and returns ADF, hashes and a bounded, lossy text diff, not a complete ADF diff.
+    The optional hash checks the complete original ADF, but GET and PUT are not atomic
+    and visibility changes are not guarded. Execution sends one PUT with only the body;
+    its returned hash describes submitted ADF, not necessarily persisted content.
+    On an uncertain or cancelled write, inspect get_issue_comments before retrying.
+    """
+    if body is not None:
+        if old_text is not None or new_text is not None or replace_all:
+            msg = "body and text replacement modes are mutually exclusive."
+            raise ToolError(msg)
+    elif old_text is None or new_text is None:
+        msg = "Provide body or both old_text and new_text."
+        raise ToolError(msg)
+
+    client = get_client(ctx)
+    path = f"issue/{issue}/comment/{comment_id}"
+    data = await client.get(path)
+    original = _validate_comment_adf(data.get("body") if isinstance(data, dict) else None)
+    before_hash = hash_adf(original)
+    if expected_hash is not None and expected_hash != before_hash:
+        msg = "Comment hash precondition did not match; no edit was made."
+        raise ToolError(msg)
+    if body is not None:
+        edited = markdown_to_adf(body)
+    elif old_text is not None and new_text is not None:
+        edited = copy.deepcopy(original)
+        _replace_text(edited, old_text, new_text, replace_all=replace_all)
+    else:
+        msg = "Provide body or both old_text and new_text."
+        raise ToolError(msg)
+    _validate_comment_adf(edited)
+    after_hash = hash_adf(edited)
+    if validate_only:
+        diff, truncated = _comment_diff(original, edited)
+        return {
+            "issue": issue,
+            "comment_id": comment_id,
+            "validate_only": True,
+            "adf": edited,
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "diff": diff,
+            "diff_truncated": truncated,
+        }
+    try:
+        await client.put(path, {"body": edited})
+    except ToolError as exc:
+        if isinstance(exc, JiraHTTPError) and exc.status_code in {400, 401, 403, 404, 422, 429}:
+            hint = (
+                " Check Edit own comments or Edit all comments permissions."
+                if exc.status_code == HTTPStatus.FORBIDDEN
+                else ""
+            )
+            msg = f"Jira rejected the edit with HTTP status {exc.status_code}; no edit was made.{hint}"
+            raise ToolError(msg) from None
+        msg = "The edit outcome is unknown; inspect get_issue_comments before retrying."
+        raise ToolError(msg) from None
+    return {"issue": issue, "comment_id": comment_id, "updated": True, "body_hash": after_hash}
 
 
 class Visibility(BaseModel):
