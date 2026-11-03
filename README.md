@@ -246,7 +246,7 @@ Issue creation is disabled by default. Set `JIRA_ENABLE_ISSUE_CREATION=true` in 
 environment and restart it to enable issue creation. Falling back to another or legacy server bypasses
 this server's gate; check that server's own controls before using it.
 
-Comments support headings, flat bullet and ordered lists, inline code, emphasis, and explicit links with
+Comments support headings, flat bullet and ordered lists, inline code, bold and italic, and explicit links with
 `http`, `https`, or `mailto` schemes. Other Markdown stays literal. Issue creation accepts either
 plain-text `description` or raw `description_adf`; it does not parse Markdown.
 

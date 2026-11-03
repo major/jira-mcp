@@ -44,7 +44,7 @@ async def add_issue_comment(
     """Add one comment, converting a small Markdown subset to ADF.
 
     Blank lines separate paragraphs and single line breaks are kept. The converter
-    supports headings, flat bullet and ordered lists, inline code, emphasis, and explicit
+    supports headings, flat bullet and ordered lists, inline code, bold and italic, and explicit
     http, https, or mailto links. Other Markdown stays plain text. Bare URLs and
     issue keys pass through for Jira to link.
     Visibility limits the comment to a group or project role. validate_only returns
