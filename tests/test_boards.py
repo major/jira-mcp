@@ -174,48 +174,9 @@ async def test_board_required_read_access_failure_is_clear(mock_jira, failed_ind
     assert_requests(requests, PATHS[: failed_index + 1])
 
 
-@pytest.mark.parametrize("owner", [{"displayName": "A Person"}, None])
-async def test_get_filter_returns_compact_payload(mock_jira, owner):
-    """Return useful filter fields without Jira permission or avatar noise."""
-    # Arrange
-    requests, responses = mock_jira
-    responses.append(httpx2.Response(200, json={**FILTER, "owner": owner}))
-
-    # Act
-    result = await invoke("get_filter", {"filter_id": "42"})
-
-    # Assert
-    assert not result.is_error
-    assert result.structured_content == {
-        "id": "42",
-        "name": "Team issues",
-        "jql": FILTER["jql"],
-        "viewUrl": FILTER["viewUrl"],
-        "owner": owner["displayName"] if owner else None,
-    }
-    assert_requests(requests, [PATHS[2]])
-
-
-@pytest.mark.parametrize("failure", [403, 404, 401, 429, 500, "malformed"])
-async def test_get_filter_errors_are_safe_and_not_retried(mock_jira, failure):
-    """Return errors without leaking Jira responses or retrying."""
-    # Arrange
-    requests, responses = mock_jira
-    responses.append(httpx2.Response(200 if failure == "malformed" else failure, text="test-secret"))
-
-    # Act
-    result = await invoke("get_filter", {"filter_id": "42"})
-
-    # Assert
-    assert result.is_error
-    assert "test-secret" not in result.content[0].text
-    assert_requests(requests, [PATHS[2]])
-
-
 @pytest.mark.parametrize(
     ("tool", "arguments"),
-    [("get_board", {"board_id": value}) for value in (0, -1, "../7", "https://evil.invalid")]
-    + [("get_filter", {"filter_id": value}) for value in ("0", "-1", "../42", "https://evil.invalid")],
+    [("get_board", {"board_id": value}) for value in (0, -1, "../7", "https://evil.invalid")],
 )
 async def test_invalid_ids_never_request(mock_jira, tool, arguments):
     """Reject invalid IDs before making a Jira request."""

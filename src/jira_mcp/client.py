@@ -24,6 +24,7 @@ class JiraClient:
     def __init__(self, settings: Settings, *, transport: httpx2.AsyncBaseTransport | None = None) -> None:
         """Configure authentication, timeouts, and redirect handling."""
         self._base_url = f"{settings.url.rstrip('/')}/rest/api/3"
+        self._agile_base_url = f"{settings.url.rstrip('/')}/rest/agile/1.0"
         self._client = httpx2.AsyncClient(
             auth=(settings.email, settings.token),
             headers={"Accept": "application/json"},
@@ -35,6 +36,11 @@ class JiraClient:
     async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """Get and decode a Jira API response, hiding remote error details."""
         return await self._request("GET", path, params=params)
+
+    async def get_board(self, board_id: int, *, configuration: bool = False) -> Any:
+        """Read board metadata or configuration from the fixed Agile API."""
+        suffix = "/configuration" if configuration else ""
+        return await self._request("GET", f"board/{board_id}{suffix}", agile=True)
 
     async def post(self, path: str, body: dict[str, Any], *, expect_json: bool = True) -> Any:
         """Send JSON, explicitly opting out of decoding for bodyless write responses."""
@@ -94,11 +100,13 @@ class JiraClient:
         files: Any = None,
         headers: dict[str, str] | None = None,
         expected_status: int | None = None,
+        agile: bool = False,
     ) -> Any:
         """Decode an API response without exposing upstream or transport error details."""
         try:
+            base_url = self._agile_base_url if agile else self._base_url
             response = await self._client.request(
-                method, f"{self._base_url}/{path.lstrip('/')}", params=params, json=json, files=files, headers=headers
+                method, f"{base_url}/{path.lstrip('/')}", params=params, json=json, files=files, headers=headers
             )
         except httpx2.RequestError:
             msg = "Jira request failed due to a network or timeout error"

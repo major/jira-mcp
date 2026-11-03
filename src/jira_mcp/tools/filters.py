@@ -16,21 +16,13 @@ from jira_mcp.common import (
     IssueId,
     Offset,
     PageSize,
+    SavedFilterPayload,
     Summary,
     validate_payload,
 )
 
 Jql = Annotated[str, Field(min_length=1, max_length=100_000, pattern=r"\S")]
 UNCERTAIN = "The filter may have been created; inspect search_filters before retrying. Do not retry automatically."
-
-
-class Filter(BaseModel):
-    """Keep only useful filter fields."""
-
-    id: IssueId
-    name: Summary
-    jql: str | None = None
-    view_url: str | None = Field(default=None, alias="viewUrl")
 
 
 class FilterIdentity(BaseModel):
@@ -46,7 +38,7 @@ class FilterPage(BaseModel):
     max_results: PageSize = Field(alias="maxResults")
     total: Offset | None = None
     is_last: bool | None = Field(default=None, alias="isLast")
-    values: list[Filter]
+    values: list[SavedFilterPayload]
 
     def next_start(self) -> int | None:
         """Advance by returned rows and reject inconsistent or stalled pages."""
@@ -124,6 +116,16 @@ def _compact(page: FilterPage) -> dict[str, Any]:
     if page.total is not None:
         result["total"] = page.total
     return result
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_filter(filter_id: IssueId, ctx: Context) -> dict[str, Any]:
+    """Get compact saved filter details and its owner's display name."""
+    data = await get_client(ctx).get(f"filter/{filter_id}")
+    item = validate_payload(SavedFilterPayload, data)
+    owner = data.get("owner") if isinstance(data, dict) else None
+    display_name = owner.get("displayName") if isinstance(owner, dict) else None
+    return {**item.model_dump(by_alias=True), "owner": display_name if isinstance(display_name, str) else None}
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -209,7 +211,7 @@ async def create_filter(  # noqa: C901, PLR0912
         msg = f"Filter {identity.id} was created, but privacy was not confirmed. {UNCERTAIN}"
         raise ToolError(msg)
     try:
-        created = validate_payload(Filter, data)
+        created = validate_payload(SavedFilterPayload, data)
     except ToolError:
         msg = f"Filter {identity.id} was created, but its response was incomplete. {UNCERTAIN}"
         raise ToolError(msg) from None

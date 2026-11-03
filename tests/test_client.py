@@ -8,6 +8,29 @@ from jira_mcp.client import JiraClient
 from jira_mcp.config import Settings
 
 
+async def test_agile_board_read_authenticates_without_following_redirects():
+    """Send credentials only to the configured Agile host and reject redirects."""
+    requests = []
+
+    def handle(request):
+        """Return a redirect that must never be followed."""
+        requests.append(request)
+        return httpx2.Response(302, headers={"Location": "https://evil.invalid/"})
+
+    client = JiraClient(
+        Settings(url="https://example.atlassian.net", email="test@example.com", token="test-secret"),  # noqa: S106
+        transport=httpx2.MockTransport(handle),
+    )
+    try:
+        with pytest.raises(ToolError, match="302"):
+            await client.get_board(7, configuration=True)
+    finally:
+        await client.aclose()
+    assert len(requests) == 1
+    assert str(requests[0].url) == "https://example.atlassian.net/rest/agile/1.0/board/7/configuration"
+    assert requests[0].headers["authorization"].startswith("Basic ")
+
+
 @pytest.mark.parametrize("status", [201, 204])
 async def test_explicit_bodyless_post(status):
     """Accept Jira's empty write acknowledgments without attempting JSON decoding."""

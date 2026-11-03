@@ -22,6 +22,8 @@ TOOLS = {
     "get_issues": "read",
     "search_issues": "read",
     "search_filters": "read",
+    "get_filter": "read",
+    "get_board": "read",
     "list_my_filters": "read",
     "create_filter": "create",
     "get_issue_comments": "read",

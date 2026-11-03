@@ -206,6 +206,8 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `list_project_issue_types` | Discover issue types available for creation in a project. |
 | `search_issues` | Search ticket text and metadata with JQL, one page at a time. |
 | `search_filters` | Search visible saved filters by name, one page at a time. |
+| `get_filter` | Get compact saved filter details and owner display name. |
+| `get_board` | Get board columns, statuses, saved filter, and scope. |
 | `list_my_filters` | List saved filters owned by the authenticated account, one page at a time. |
 | `create_filter` | **Writes.** Validate JQL and create a private saved filter, or preview the payload. |
 
@@ -217,6 +219,11 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `create_issue_link` | Link two Jira issues with an explicit type and direction. **Writes.** |
 | `get_issue_remote_links` | List a ticket's remote web links. |
 | `create_issue_remote_link` | Create a web link unless its exact URL already exists. **Writes.** |
+
+Board example: call `get_board(board_id=7)` and `get_filter(filter_id="42")` to inspect the board and its filter.
+Board `jql` represents saved-filter membership plus the configured subquery, not exact UI membership. Column/status
+mapping, active sprint, quick filters, and URL search can restrict results further. Ordering is not preserved in this JQL;
+the saved filter's original JQL is returned unchanged. Inaccessible filters or status names are reported separately.
 
 Saved filter example: call `create_filter(name="My filter", jql="project = DEMO", validate_only=true)` to preview,
 then omit `validate_only` to create. Validation uses read-only POSTs. Creation checks the account's default share

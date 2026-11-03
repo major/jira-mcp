@@ -1,10 +1,23 @@
 """Jira tool modules. Importing this package registers every tool it contains 🧩."""
 
-from jira_mcp.tools import assign, attachments, comments, create, fields, filters, issues, links, transitions, users
+from jira_mcp.tools import (
+    assign,
+    attachments,
+    boards,
+    comments,
+    create,
+    fields,
+    filters,
+    issues,
+    links,
+    transitions,
+    users,
+)
 
 __all__ = [
     "assign",
     "attachments",
+    "boards",
     "comments",
     "create",
     "fields",

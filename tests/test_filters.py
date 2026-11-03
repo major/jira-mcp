@@ -395,3 +395,57 @@ async def test_invalid_arguments_make_no_request(mock_jira, tool, args):
     assert result.is_error
     assert result.content[0].text
     assert requests == []
+
+
+def assert_filter_request(requests):
+    """Check the single trusted filter read."""
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert str(requests[0].url) == "https://example.atlassian.net/rest/api/3/filter/42"
+
+
+@pytest.mark.parametrize("owner", [{"displayName": "A Person"}, None])
+async def test_get_filter_returns_compact_payload(mock_jira, owner):
+    """Return useful filter fields without Jira permission or avatar noise."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json={**CREATED, "owner": owner}))
+
+    # Act
+    result = await invoke("get_filter", {"filter_id": "42"})
+
+    # Assert
+    assert not result.is_error
+    assert result.structured_content == {
+        "id": "42",
+        "name": NAME,
+        "jql": CREATED["jql"],
+        "viewUrl": CREATED["viewUrl"],
+        "owner": owner["displayName"] if owner else None,
+    }
+    assert_filter_request(requests)
+
+
+@pytest.mark.parametrize("failure", [403, 404, 401, 429, 500, "malformed"])
+async def test_get_filter_errors_are_safe_and_not_retried(mock_jira, failure):
+    """Return errors without leaking Jira responses or retrying."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200 if failure == "malformed" else failure, text="test-secret"))
+
+    # Act
+    result = await invoke("get_filter", {"filter_id": "42"})
+
+    # Assert
+    assert result.is_error
+    assert "test-secret" not in result.content[0].text
+    assert_filter_request(requests)
+
+
+@pytest.mark.parametrize("filter_id", ["0", "-1", "../42", "https://evil.invalid"])
+async def test_get_filter_invalid_id_never_requests(mock_jira, filter_id):
+    """Reject invalid filter IDs before making a Jira request."""
+    requests, _ = mock_jira
+    result = await invoke("get_filter", {"filter_id": filter_id})
+    assert result.is_error
+    assert requests == []
