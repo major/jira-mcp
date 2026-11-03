@@ -97,33 +97,44 @@ def _comment_diff(before: dict[str, Any], after: dict[str, Any]) -> tuple[str, b
 
 
 @mcp.tool(annotations=WRITE)
-async def edit_issue_comment(  # noqa: PLR0913
+async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
     issue: Issue,
     comment_id: IssueId,
     ctx: Context,
     *,
     expected_hash: CommentHash | None = None,
     body: CommentBody | None = None,
+    body_adf: dict[str, Any] | None = None,
     old_text: OldText | None = None,
     new_text: NewText | None = None,
     replace_all: bool = False,
     validate_only: bool = False,
 ) -> dict[str, Any]:
-    """Edit a comment by replacing its Markdown body or exact text within ADF text nodes.
+    """Edit a comment using a whole Markdown or raw ADF body, or exact text replacement.
 
+    body_adf is a full replacement, not a partial merge. Fetch the complete body.adf
+    and body_hash with get_issue_comments(include_raw_adf=true, include_hashes=true)
+    and retain unrelated nodes. Raw ADF validation checks only the document envelope
+    and 100,000 compact UTF-8 JSON bytes, not nested Jira validation.
     Text replacements preserve newlines literally and cannot span nodes. Preview performs
     a GET and returns ADF, hashes and a bounded, lossy text diff, not a complete ADF diff.
+    Use the preview before_hash, not after_hash, as the optional guard for execution.
     The optional hash checks the complete original ADF, but GET and PUT are not atomic
     and visibility changes are not guarded. Execution sends one PUT with only the body;
     its returned hash describes submitted ADF, not necessarily persisted content.
     On an uncertain or cancelled write, inspect get_issue_comments before retrying.
     """
-    if body is not None:
+    if body_adf is not None:
+        if body is not None or old_text is not None or new_text is not None or replace_all:
+            msg = "body_adf and other replacement modes are mutually exclusive."
+            raise ToolError(msg)
+        _validate_comment_adf(body_adf)
+    elif body is not None:
         if old_text is not None or new_text is not None or replace_all:
             msg = "body and text replacement modes are mutually exclusive."
             raise ToolError(msg)
     elif old_text is None or new_text is None:
-        msg = "Provide body or both old_text and new_text."
+        msg = "Provide body, body_adf, or both old_text and new_text."
         raise ToolError(msg)
 
     client = get_client(ctx)
@@ -136,11 +147,13 @@ async def edit_issue_comment(  # noqa: PLR0913
         raise ToolError(msg)
     if body is not None:
         edited = markdown_to_adf(body)
+    elif body_adf is not None:
+        edited = body_adf
     elif old_text is not None and new_text is not None:
         edited = copy.deepcopy(original)
         _replace_text(edited, old_text, new_text, replace_all=replace_all)
     else:
-        msg = "Provide body or both old_text and new_text."
+        msg = "Provide body, body_adf, or both old_text and new_text."
         raise ToolError(msg)
     _validate_comment_adf(edited)
     after_hash = hash_adf(edited)
