@@ -22,6 +22,8 @@ TOOLS = {
     "get_issues": "read",
     "search_issues": "read",
     "search_filters": "read",
+    "get_filter": "read",
+    "get_board": "read",
     "list_my_filters": "read",
     "create_filter": "create",
     "get_issue_comments": "read",
@@ -78,7 +80,7 @@ def test_readme_lists_every_tool_and_marks_writes():
     """Keep one README row per tool and mark exactly the writes."""
     # Arrange
     readme = (Path(__file__).parents[1] / "README.md").read_text()
-    table = readme.split("## Tools", 1)[1].split("\n\n<details>", 1)[0]
+    table = readme.split("## Tools", 1)[1].split("| Tool | Purpose |", 1)[1].split("\n\n", 1)[0]
 
     # Act
     rows = dict(re.findall(r"^\| `(\w+)` \| (.*) \|$", table, flags=re.MULTILINE))

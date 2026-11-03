@@ -53,6 +53,15 @@ def id_or_key(value: str) -> dict[str, str]:
 Summary = Annotated[str, Field(min_length=1, max_length=255, pattern=r"^[^\r\n]*\S[^\r\n]*$")]
 
 
+class SavedFilterPayload(BaseModel):
+    """Keep only useful saved filter fields."""
+
+    id: IssueId
+    name: Summary
+    jql: str | None = None
+    view_url: str | None = Field(default=None, alias="viewUrl")
+
+
 Description = Annotated[str, Field(max_length=100_000)]
 
 
