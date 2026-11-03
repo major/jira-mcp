@@ -32,7 +32,6 @@ def preflight(responses, *, scope="PRIVATE", page=None):
         [
             httpx2.Response(200, json={"queries": [{"query": JQL, "structure": {}}]}),
             httpx2.Response(200, json={"issues": [], "isLast": True}),
-            httpx2.Response(200, json={"scope": scope}),
             httpx2.Response(200, json={"accountId": "me"}),
             httpx2.Response(
                 200,
@@ -40,6 +39,7 @@ def preflight(responses, *, scope="PRIVATE", page=None):
                 if page is not None
                 else {"startAt": 0, "maxResults": 100, "total": 0, "isLast": True, "values": []},
             ),
+            httpx2.Response(200, json={"scope": scope}),
         ]
     )
 
@@ -70,12 +70,12 @@ async def test_create_private_filter_once(mock_jira):
     assert not result.is_error
     assert_jql_requests(requests)
     assert [r.url.path for r in requests[2:]] == [
-        "/rest/api/3/filter/defaultShareScope",
         "/rest/api/3/myself",
         "/rest/api/3/filter/search",
+        "/rest/api/3/filter/defaultShareScope",
         "/rest/api/3/filter",
     ]
-    assert dict(requests[4].url.params) == {
+    assert dict(requests[3].url.params) == {
         "filterName": NAME,
         "accountId": "me",
         "expand": "jql,viewUrl",
@@ -135,6 +135,10 @@ async def test_invalid_jql_fails_before_create(mock_jira, response):
     [
         {"startAt": 0, "maxResults": 100, "total": 1, "isLast": True, "values": [CREATED]},
         {"startAt": 0, "maxResults": 100, "total": 101, "isLast": False, "values": []},
+        {"startAt": 0, "maxResults": 100, "total": 80, "values": [{**CREATED, "name": "Other"}] * 20},
+        {"startAt": 0, "maxResults": 100, "total": 80, "isLast": True, "values": [{**CREATED, "name": "Other"}]},
+        {"startAt": 0, "maxResults": 100, "total": 1, "isLast": False, "values": [{**CREATED, "name": "Other"}]},
+        {"startAt": 0, "maxResults": 100, "values": []},
     ],
 )
 async def test_duplicate_or_incomplete_owned_search_fails_closed(mock_jira, page):
@@ -149,7 +153,7 @@ async def test_duplicate_or_incomplete_owned_search_fails_closed(mock_jira, page
     # Assert
     assert result.is_error
     assert result.content[0].text.startswith("No filter was created")
-    assert len(requests) == 5
+    assert len(requests) == 4
     assert requests[-1].url.path == "/rest/api/3/filter/search"
 
 
@@ -165,7 +169,8 @@ async def test_shared_default_rejected(mock_jira):
     # Assert
     assert result.is_error
     assert result.content[0].text.startswith("No filter was created")
-    assert len(requests) == 3
+    assert len(requests) == 5
+    assert requests[-1].url.path == "/rest/api/3/filter/defaultShareScope"
 
 
 @pytest.mark.parametrize(
@@ -329,7 +334,7 @@ async def test_list_my_filters_preserves_upstream_paging(mock_jira):
 
     # Assert
     assert not result.is_error
-    assert result.structured_content["next_start_at"] == 15
+    assert result.structured_content["next_start_at"] == 6
     assert result.structured_content["filters"][0]["id"] == "42"
     assert requests[0].url.path == "/rest/api/3/myself"
     assert dict(requests[1].url.params) == {
@@ -338,6 +343,34 @@ async def test_list_my_filters_preserves_upstream_paging(mock_jira):
         "startAt": "5",
         "maxResults": "20",
     }
+
+
+@pytest.mark.parametrize(
+    ("page", "expected", "error"),
+    [
+        ({"startAt": 0, "maxResults": 20, "total": 2, "values": [CREATED]}, 1, False),
+        ({"startAt": 0, "maxResults": 20, "total": 1, "values": [CREATED]}, None, False),
+        ({"startAt": 0, "maxResults": 20, "total": 0, "values": []}, None, False),
+        ({"startAt": 0, "maxResults": 20, "values": [CREATED]}, None, True),
+        ({"startAt": 0, "maxResults": 20, "isLast": False, "values": []}, None, True),
+        ({"startAt": 0, "maxResults": 20, "total": 2, "isLast": True, "values": [CREATED]}, None, True),
+        ({"startAt": 0, "maxResults": 20, "total": 1, "isLast": False, "values": [CREATED]}, None, True),
+    ],
+)
+async def test_search_filter_page_continuation(mock_jira, page, expected, error):
+    """Advance by returned rows and reject incomplete or inconsistent pagination."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(200, json=page))
+
+    # Act
+    result = await invoke("search_filters", {"name": NAME})
+
+    # Assert
+    assert result.is_error is error
+    if not error:
+        assert result.structured_content["next_start_at"] == expected
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize(

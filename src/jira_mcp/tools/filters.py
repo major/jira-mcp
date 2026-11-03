@@ -1,7 +1,5 @@
 """Find and create private Jira saved filters."""
 
-# ruff: noqa: TRY003, TRY301, C901, PLR0912
-
 from typing import Annotated, Any
 
 from fastmcp import Context  # noqa: TC002
@@ -51,15 +49,21 @@ class FilterPage(BaseModel):
     values: list[Filter]
 
     def next_start(self) -> int | None:
-        """Use the upstream window rather than the number of returned rows."""
-        if self.is_last is True:
-            return None
-        end = self.start_at + self.max_results
-        if self.is_last is False:
-            return end
-        if self.total is None:
-            raise ToolError("Jira returned incomplete filter pagination.")
-        return end if end < self.total else None
+        """Advance by returned rows and reject inconsistent or stalled pages."""
+        end = self.start_at + len(self.values)
+        if self.total is None and self.is_last is None:
+            msg = "Jira returned incomplete filter pagination."
+            raise ToolError(msg)
+        if self.total is not None and (
+            (self.is_last is True and self.total > end) or (self.is_last is False and self.total <= end)
+        ):
+            msg = "Jira returned inconsistent filter pagination."
+            raise ToolError(msg)
+        has_more = self.is_last is False or (self.is_last is None and self.total is not None and end < self.total)
+        if has_more and not self.values:
+            msg = "Jira returned an empty nonterminal filter page."
+            raise ToolError(msg)
+        return end if has_more else None
 
 
 class Account(BaseModel):
@@ -138,7 +142,7 @@ async def list_my_filters(ctx: Context, start_at: Offset = 0, max_results: PageS
 
 
 @mcp.tool(annotations=CREATE)
-async def create_filter(
+async def create_filter(  # noqa: C901, PLR0912
     name: Summary, jql: Jql, ctx: Context, description: Description | None = None, validate_only: bool = False
 ) -> dict[str, Any]:
     """Validate JQL and create one private filter, or preview without creating.
@@ -159,29 +163,35 @@ async def create_filter(
             or parsed.queries[0].errors
             or parsed.queries[0].structure is None
         ):
-            raise ToolError("Strict JQL validation failed.")
+            msg = "Strict JQL validation failed."
+            raise ToolError(msg)  # noqa: TRY301
         validate_payload(
             SearchResult, await client.post("search/jql", {"jql": jql, "maxResults": 1, "fields": ["key"]})
         )
         if validate_only:
             return {"validate_only": True, "payload": payload}
-        scope = await client.get("filter/defaultShareScope")
-        if not isinstance(scope, dict) or scope.get("scope") != "PRIVATE":
-            raise ToolError("The default filter sharing scope is not PRIVATE.")
         account = await _account(client)
         page = await _page(client, {**_params(0, 100), "filterName": name, "accountId": account})
         if any(item.name == name for item in page.values):
-            raise ToolError("A filter with this name already exists.")
+            msg = "A filter with this name already exists."
+            raise ToolError(msg)  # noqa: TRY301
         if page.start_at != 0 or page.next_start() is not None:
-            raise ToolError("The duplicate check is incomplete.")
+            msg = "The duplicate check is incomplete."
+            raise ToolError(msg)  # noqa: TRY301
+        scope = await client.get("filter/defaultShareScope")
+        if not isinstance(scope, dict) or scope.get("scope") != "PRIVATE":
+            msg = "The default filter sharing scope is not PRIVATE."
+            raise ToolError(msg)  # noqa: TRY301
     except ToolError as exc:
-        raise ToolError(f"No filter was created. {exc}") from None
+        msg = f"No filter was created. {exc}"
+        raise ToolError(msg) from None
 
     try:
         data = await client.post("filter", payload)
     except JiraHTTPError as exc:
         if exc.status_code in (400, 401, 403, 404):
-            raise ToolError("No filter was created. Check the name, JQL, permissions, and duplicates.") from None
+            msg = "No filter was created. Check the name, JQL, permissions, and duplicates."
+            raise ToolError(msg) from None
         raise ToolError(UNCERTAIN) from None
     except ToolError:
         raise ToolError(UNCERTAIN) from None
@@ -196,7 +206,8 @@ async def create_filter(
         or data.get("sharePermissions") != []
         or ("editPermissions" in data and data["editPermissions"] != [])
     ):
-        raise ToolError(f"Filter {identity.id} was created, but privacy was not confirmed. {UNCERTAIN}")
+        msg = f"Filter {identity.id} was created, but privacy was not confirmed. {UNCERTAIN}"
+        raise ToolError(msg)
     try:
         created = validate_payload(Filter, data)
     except ToolError:
