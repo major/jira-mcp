@@ -9,6 +9,7 @@ from fastmcp.exceptions import ToolError
 
 from jira_mcp import mcp
 from jira_mcp.common import validate_description_adf
+from jira_mcp.text import markdown_to_adf, plain_text_to_adf, render_text
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
@@ -980,3 +981,157 @@ async def test_create_rejections_are_distinct_from_uncertain_outcomes(mock_jira,
     assert "may already exist" not in message
     assert "test-secret" not in message
     assert [request.method for request in requests] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize("preview", [True, False])
+@pytest.mark.parametrize("format_option", [{}, {"description_format": "plain"}, {"description_format": "markdown"}])
+async def test_create_description_format(mock_jira, monkeypatch, preview, format_option):
+    """Preserve plain descriptions and opt in to Markdown for previews and writes."""
+    requests, responses = mock_jira
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", "true")
+    responses.append(create_metadata("description"))
+    if not preview:
+        responses.append(httpx2.Response(201, json={"id": "1", "key": "TEAM-1"}))
+    description = "# Heading\n\n**Bold** and `code`\n\n> unsupported"
+    options = {
+        "project": "TEAM",
+        "issue_type_id": "9",
+        "summary": "Title",
+        "description": description,
+        "validate_only": preview,
+        **format_option,
+    }
+
+    result = await invoke("create_issue", options)
+
+    assert not result.is_error
+    assert [request.method for request in requests] == (["GET"] + ([] if preview else ["POST"]))
+    fields = result.structured_content["fields"] if preview else json.loads(requests[-1].content)["fields"]
+    expected = (
+        markdown_to_adf(description)
+        if format_option.get("description_format") == "markdown"
+        else plain_text_to_adf(description)
+    )
+    assert fields["description"] == expected
+    if format_option.get("description_format") == "markdown":
+        assert expected == {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {"type": "heading", "attrs": {"level": 1}, "content": [{"type": "text", "text": "Heading"}]},
+                {
+                    "type": "paragraph",
+                    "content": [
+                        {"type": "text", "text": "Bold", "marks": [{"type": "strong"}]},
+                        {"type": "text", "text": " and "},
+                        {"type": "text", "text": "code", "marks": [{"type": "code"}]},
+                    ],
+                },
+                {"type": "paragraph", "content": [{"type": "text", "text": "> unsupported"}]},
+            ],
+        }
+        rendered = render_text(expected, limit=1000, include_raw=False)["text"]
+        assert all(part in rendered for part in ("Heading", "Bold", "code", "> unsupported"))
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"description_format": "markdown"},
+        {"description_format": "markdown", "description": None},
+        {"description_format": "markdown", "description_adf": {"type": "doc", "version": 1, "content": []}},
+        {
+            "description_format": "markdown",
+            "description": "",
+            "description_adf": {"type": "doc", "version": 1, "content": []},
+        },
+        {"description_format": "invalid", "description": "text"},
+        {"description_format": None, "description": "text"},
+    ],
+)
+async def test_create_invalid_description_format_is_local(mock_jira, options):
+    """Reject incompatible or invalid format arguments before any Jira request."""
+    requests, _ = mock_jira
+
+    result = await invoke(
+        "create_issue",
+        {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "validate_only": True, **options},
+    )
+
+    assert result.is_error
+    assert not requests
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_create_markdown_generated_adf_byte_limit(mock_jira, accepted):
+    """Enforce the compact UTF-8 ADF limit, including multibyte text."""
+    requests, responses = mock_jira
+    if accepted:
+        responses.append(create_metadata("description"))
+    overhead = len(json.dumps(markdown_to_adf("x"), ensure_ascii=False, separators=(",", ":")).encode()) - 1
+    remaining = 100_000 - overhead
+    description = "🙂" * (remaining // 4) + "x" * (remaining % 4 + (0 if accepted else 1))
+    assert len(json.dumps(markdown_to_adf(description), ensure_ascii=False, separators=(",", ":")).encode()) == (
+        100_000 if accepted else 100_001
+    )
+
+    result = await invoke(
+        "create_issue",
+        {
+            "project": "TEAM",
+            "issue_type_id": "9",
+            "summary": "Title",
+            "description": description,
+            "description_format": "markdown",
+            "validate_only": True,
+        },
+    )
+
+    assert result.is_error is not accepted
+    assert [request.method for request in requests] == (["GET"] if accepted else [])
+
+
+async def test_create_empty_markdown_is_accepted(mock_jira):
+    """Accept an empty string as a supplied Markdown description."""
+    requests, responses = mock_jira
+    responses.append(create_metadata("description"))
+
+    result = await invoke(
+        "create_issue",
+        {
+            "project": "TEAM",
+            "issue_type_id": "9",
+            "summary": "Title",
+            "description": "",
+            "description_format": "markdown",
+            "validate_only": True,
+        },
+    )
+
+    assert not result.is_error
+    fields = result.structured_content["fields"]
+    assert fields["description"] == markdown_to_adf("")
+    assert [request.method for request in requests] == ["GET"]
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_create_issue_plain_character_limit(mock_jira, accepted):
+    """Keep the existing character limit for multibyte plain text."""
+    requests, responses = mock_jira
+    if accepted:
+        responses.append(create_metadata("description"))
+    description = "🙂" * (100_000 if accepted else 100_001)
+
+    result = await invoke(
+        "create_issue",
+        {
+            "project": "TEAM",
+            "issue_type_id": "9",
+            "summary": "Title",
+            "description": description,
+            "validate_only": True,
+        },
+    )
+
+    assert result.is_error is not accepted
+    assert [request.method for request in requests] == (["GET"] if accepted else [])
