@@ -21,7 +21,7 @@ from jira_mcp.common import (
     validate_description_adf,
     validate_payload,
 )
-from jira_mcp.text import hash_adf, markdown_to_adf, render_text
+from jira_mcp.text import hash_adf, markdown_to_adf, render_text, with_warnings
 
 # Jira Cloud limits comments to 32,767 characters of stored ADF, so this local cap is approximate.
 CommentBody = Annotated[str, Field(min_length=1, max_length=32_767, pattern=r"\S")]
@@ -159,7 +159,7 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
     after_hash = hash_adf(edited)
     if validate_only:
         diff, truncated = _comment_diff(original, edited)
-        return {
+        preview = {
             "issue": issue,
             "comment_id": comment_id,
             "validate_only": True,
@@ -169,6 +169,7 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
             "diff": diff,
             "diff_truncated": truncated,
         }
+        return with_warnings(preview, body or "")
     try:
         await client.put(path, {"body": edited})
     except ToolError as exc:
@@ -182,7 +183,8 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
             raise ToolError(msg) from None
         msg = "The edit outcome is unknown; inspect get_issue_comments before retrying."
         raise ToolError(msg) from None
-    return {"issue": issue, "comment_id": comment_id, "updated": True, "body_hash": after_hash}
+    result = {"issue": issue, "comment_id": comment_id, "updated": True, "body_hash": after_hash}
+    return with_warnings(result, body or "")
 
 
 class Visibility(BaseModel):
@@ -222,7 +224,7 @@ async def add_issue_comment(
     """
     adf = markdown_to_adf(body)
     if validate_only:
-        return {"validate_only": True, "issue": issue, "adf": adf}
+        return with_warnings({"validate_only": True, "issue": issue, "adf": adf}, body)
     payload: dict[str, Any] = {"body": adf}
     if visibility is not None:
         payload["visibility"] = visibility.model_dump()
@@ -234,4 +236,4 @@ async def add_issue_comment(
     except ToolError as exc:
         message = f"{str(exc).rstrip('.')}. {COMMENT_UNCERTAIN}"
         raise ToolError(message) from None
-    return {"id": created.id, "issue": issue, "created": created.created}
+    return with_warnings({"id": created.id, "issue": issue, "created": created.created}, body)

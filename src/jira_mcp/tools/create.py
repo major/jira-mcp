@@ -25,7 +25,7 @@ from jira_mcp.common import (
     validate_payload,
 )
 from jira_mcp.create_metadata import CreateField, CreateFieldPage, CreateIssueTypePage, create_field_problems
-from jira_mcp.text import markdown_to_adf, plain_text_to_adf
+from jira_mcp.text import markdown_to_adf, plain_text_to_adf, with_warnings
 
 Project = Annotated[str, Field(pattern=r"^(?:[A-Za-z][A-Za-z0-9_]*|[1-9][0-9]*)$", max_length=255)]
 
@@ -225,6 +225,8 @@ async def create_issue(  # noqa: C901, PLR0913 - Explicit arguments and checks k
         raise ToolError(msg)
 
     converted_description = None
+    # Plain text is stored as written, so only Markdown input can be misread.
+    markdown = (description or "") if description_format == "markdown" else ""
     if description_adf is not None:
         converted_description = validate_description_adf(description_adf)
     elif description is not None:
@@ -258,7 +260,7 @@ async def create_issue(  # noqa: C901, PLR0913 - Explicit arguments and checks k
         msg = f"{NOT_CREATED}: {'; '.join(problems)}."
         raise ToolError(msg)
     if validate_only:
-        return {"validate_only": True, "creation_enabled": enabled, "fields": fields}
+        return with_warnings({"validate_only": True, "creation_enabled": enabled, "fields": fields}, markdown)
 
     try:
         data = await client.post("issue", {"fields": fields})
@@ -271,4 +273,4 @@ async def create_issue(  # noqa: C901, PLR0913 - Explicit arguments and checks k
         raise ToolError(msg) from None
     browse_base = ctx.lifespan_context["browse_base"]
     url = None if browse_base is None else f"{browse_base}/browse/{created.key}"
-    return {**created.model_dump(), "url": url}
+    return with_warnings({**created.model_dump(), "url": url}, markdown)

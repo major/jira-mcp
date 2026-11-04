@@ -25,7 +25,7 @@ from jira_mcp.common import (
     validate_description_adf,
     validate_payload,
 )
-from jira_mcp.text import hash_adf, markdown_to_adf, plain_text_to_adf, render_text
+from jira_mcp.text import hash_adf, markdown_to_adf, plain_text_to_adf, render_text, with_warnings
 
 IssueSelection = Annotated[list[Issue], Field(min_length=1, max_length=20)]
 
@@ -115,6 +115,8 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
         msg = "labels_add and labels_remove must not overlap."
         raise ToolError(msg)
     fields: dict[str, Any] = {}
+    # Plain text is stored as written, so only Markdown input can be misread.
+    markdown = (description or "") if description_format == "markdown" else ""
     if summary is not None:
         fields["summary"] = summary
     if description_adf is not None:
@@ -137,14 +139,17 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
         msg = "At least one change is required."
         raise ToolError(msg)
     if validate_only:
-        return {
-            "validate_only": True,
-            "issue": issue,
-            "edits_enabled": enabled,
-            "payload": payload,
-            "expected_summary": expected_summary,
-            "guard_checked": False,
-        }
+        return with_warnings(
+            {
+                "validate_only": True,
+                "issue": issue,
+                "edits_enabled": enabled,
+                "payload": payload,
+                "expected_summary": expected_summary,
+                "guard_checked": False,
+            },
+            markdown,
+        )
     if expected_summary is not None:
         data = await client.get(f"issue/{issue}", params={"fields": "summary"})
         if validate_payload(GuardIssue, data).fields.summary != expected_summary:
@@ -158,7 +163,7 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
             raise ToolError(msg) from None
         msg = f"{exc}. The update outcome is unknown; inspect get_issue before retrying."
         raise ToolError(msg) from None
-    return {"issue": issue, "updated": True}
+    return with_warnings({"issue": issue, "updated": True}, markdown)
 
 
 class BulkIssueError(BaseModel):

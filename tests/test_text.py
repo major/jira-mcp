@@ -2,7 +2,7 @@
 
 import pytest
 
-from jira_mcp.text import markdown_to_adf, plain_text_to_adf, render_text
+from jira_mcp.text import find_markup_warnings, markdown_to_adf, plain_text_to_adf, render_text, with_warnings
 
 
 def _task(state, *content):
@@ -427,3 +427,40 @@ def test_adf_structure_and_fallbacks(body, expected):
     result = render_text(body, limit=1000, include_raw=True)
 
     assert result == {"text": expected, "characters": len(expected), "truncated": False, "adf": body}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("h3. Title", ["wiki heading"]),
+        ("use {{code}} here", ["wiki monospace"]),
+        ("{code:python}\nx = 1\n{code}", ["wiki block macro"]),
+        ("see [docs|https://example.com/d]", ["wiki link"]),
+        ("||a||b||", ["wiki table"]),
+        ("** nested", ["wiki nested bullet"]),
+        ("# one\n# two", ["H1 headings"]),
+        ("h3. A\r\n{{x}}", ["wiki heading", "wiki monospace"]),
+        ("`h3. Title` and `{{x}}`", []),
+        ("`open\nh3. Title\nclose`", ["wiki heading"]),
+        ("# one\ntext\n# two", []),
+        ("### Title\n**bold** [docs](https://example.com)\n1. one", []),
+    ],
+)
+def test_find_markup_warnings(text, expected):
+    """Warn once per wiki construct, skipping code spans and valid Markdown."""
+    # Act
+    warnings = find_markup_warnings(text)
+
+    # Assert
+    assert len(warnings) == len(expected)
+    assert all(part in warning for part, warning in zip(expected, warnings, strict=True))
+
+
+def test_with_warnings_adds_key_only_when_needed():
+    """Keep the result unchanged unless the Markdown looks like wiki markup."""
+    # Arrange
+    result = {"id": "1"}
+
+    # Act and Assert
+    assert with_warnings(result, "clean **text**") == {"id": "1"}
+    assert with_warnings(result, "h3. Title")["warnings"] == find_markup_warnings("h3. Title")

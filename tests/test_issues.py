@@ -1189,6 +1189,25 @@ async def test_comment_reply_and_internal_visibility(mock_jira):
 
 
 @pytest.mark.parametrize("preview", [True, False])
+@pytest.mark.parametrize(("format_option", "warned"), [({}, False), ({"description_format": "markdown"}, True)])
+async def test_update_warns_about_wiki_markup_only_in_markdown(mock_jira, monkeypatch, preview, format_option, warned):
+    """Warn about wiki markup only when the description is parsed as Markdown."""
+    # Arrange
+    _, responses = mock_jira
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
+    if not preview:
+        responses.append(httpx2.Response(204))
+    options = {"issue": "DEMO-1", "description": "h3. Title", "validate_only": preview, **format_option}
+
+    # Act
+    result = await invoke("update_issue", options)
+
+    # Assert
+    assert not result.is_error
+    assert ("warnings" in result.structured_content) is warned
+
+
+@pytest.mark.parametrize("preview", [True, False])
 @pytest.mark.parametrize("format_option", [{}, {"description_format": "plain"}, {"description_format": "markdown"}])
 async def test_update_description_format(mock_jira, monkeypatch, preview, format_option):
     """Preserve plain descriptions and opt in to Markdown for previews and writes."""

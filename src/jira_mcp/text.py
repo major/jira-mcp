@@ -3,7 +3,7 @@
 import hashlib
 import json
 import re
-from itertools import groupby
+from itertools import groupby, pairwise
 from typing import Any
 
 # Split on one or more blank lines (lines with only whitespace count as blank).
@@ -16,6 +16,19 @@ HEADING = re.compile(r"^(#{1,6}) (.*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
+# Jira wiki markup that the Markdown converter keeps as literal text, with the Markdown advice to give.
+WIKI_MARKUP = (
+    (re.compile(r"^h[1-6]\. "), "Jira wiki heading; write '### Title' instead of 'h3. Title'."),
+    (re.compile(r"\{\{[^{}\n]+\}\}"), "Jira wiki monospace; wrap code in backticks instead of {{ }}."),
+    (
+        re.compile(r"(?<!\{)\{(?:code|noformat|quote|panel)\b[^}]*\}"),
+        "Jira wiki block macro is not supported; use backticks.",
+    ),
+    (re.compile(r"\[[^\[\]|\n]+\|https?://[^\]\s]+\]"), "Jira wiki link; write [label](url) instead."),
+    (re.compile(r"^\|\|"), "Jira wiki table is not supported; use a bullet list."),
+    (re.compile(r"^\*{2,} "), "Jira wiki nested bullet; nested lists are not supported, use flat bullets."),
+)
+NUMBERED_HEADINGS = "Two '# ' lines in a row are H1 headings; write '1.' for a numbered list instead of '#'."
 
 
 def hash_adf(adf: dict[str, Any]) -> str:
@@ -35,6 +48,27 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
             paragraph["content"] = [{"type": "text", "text": line}]
         paragraphs.append(paragraph)
     return {"type": "doc", "version": 1, "content": paragraphs}
+
+
+def find_markup_warnings(text: str) -> list[str]:
+    """Report Jira wiki markup in Markdown input that the converter would render wrongly.
+
+    Lines are checked one at a time with inline backtick code spans removed, so inline code
+    never triggers a warning and one stray backtick cannot hide later lines.
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    # The capture group in INLINE_CODE puts text outside code spans at the even indexes.
+    outside = ["".join(INLINE_CODE.split(line)[::2]) for line in lines]
+    found = [advice for pattern, advice in WIKI_MARKUP if any(pattern.search(line) for line in outside)]
+    if any(first.startswith("# ") and second.startswith("# ") for first, second in pairwise(outside)):
+        found.append(NUMBERED_HEADINGS)
+    return found
+
+
+def with_warnings(result: dict[str, Any], markdown: str) -> dict[str, Any]:
+    """Add a warnings list to a tool result when the Markdown input looks like wiki markup."""
+    warnings = find_markup_warnings(markdown)
+    return {**result, "warnings": warnings} if warnings else result
 
 
 def markdown_to_adf(text: str) -> dict[str, Any]:
