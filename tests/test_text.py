@@ -63,9 +63,13 @@ def _para(*content):
     return {"type": "paragraph", "content": list(content)} if content else {"type": "paragraph"}
 
 
-def _text(text, *, code=False):
-    """Build an ADF text node, optionally with a code mark."""
-    return {"type": "text", "text": text, "marks": [{"type": "code"}]} if code else {"type": "text", "text": text}
+def _text(text, *, code=False, strong=False):
+    """Build an ADF text node, optionally with a code or strong mark."""
+    if code:
+        return {"type": "text", "text": text, "marks": [{"type": "code"}]}
+    if strong:
+        return {"type": "text", "text": text, "marks": [{"type": "strong"}]}
+    return {"type": "text", "text": text}
 
 
 def _bullets(*items):
@@ -188,7 +192,7 @@ def test_markdown_extended_subset():
         ("snake_case_identifier foo__bar__baz", [_text("snake_case_identifier foo__bar__baz")]),
         ("a * b * c", [_text("a * b * c")]),
         ("unmatched **marker", [_text("unmatched **marker")]),
-        ("* spaced* and *end *", [_text("* spaced* and *end *")]),
+        ("x * spaced* and *end *", [_text("x * spaced* and *end *")]),
         ("***unsupported***", [_text("***unsupported***")]),
         (
             "**a`code`**",
@@ -227,11 +231,18 @@ def test_markdown_emphasis(markdown, content):
     [
         ("h3. Title", [_para(_text("h3. Title"))]),
         ("use {{code}} here", [_para(_text("use {{code}} here"))]),
-        ("* item", [_para(_text("* item"))]),
+        ("* item", [_bullets(_para(_text("item")))]),
+        ("- a\n* b", [_bullets(_para(_text("a")), _para(_text("b")))]),
+        ("* text*", [_bullets(_para(_text("text*")))]),
+        ("**bold** x", [_para(_text("bold", strong=True), _text(" x"))]),
+        ("*em* line", [_para({"type": "text", "text": "em", "marks": [{"type": "em"}]}, _text(" line"))]),
+        ("*a", [_para(_text("*a"))]),
+        ("***", [_para(_text("***"))]),
+        ("---", [_para(_text("---"))]),
     ],
 )
-def test_markdown_leaves_wiki_markup_and_star_bullets_literal(markdown, content):
-    """Characterize wiki headings, wiki monospace, and star bullets staying plain text."""
+def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
+    """Keep wiki markup literal and treat dash or star plus a space as a bullet."""
     # Act
     result = markdown_to_adf(markdown)
 

@@ -10,7 +10,8 @@ from typing import Any
 BLANK_LINES = re.compile(r"\n(?:[^\S\n]*\n)+")
 # The capture group makes re.split put each code span at an odd index.
 INLINE_CODE = re.compile(r"`([^`]+)`")
-BULLET = "- "
+# A dash or star followed by a space starts a bullet; "**bold**" and "*em*" do not match.
+BULLET = re.compile(r"^[-*] (.*)$")
 HEADING = re.compile(r"^(#{1,6}) (.*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
@@ -39,7 +40,7 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
 def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
-    Support headings, flat lists, inline code, emphasis, and explicit safe links.
+    Support headings, flat lists (dash or star bullets), inline code, emphasis, and explicit safe links.
     Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
@@ -49,7 +50,8 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
         for kind, group in groupby(chunk.split("\n"), key=_block_kind):
             lines = list(group)
             if kind == "bullet":
-                items = [{"type": "listItem", "content": [_paragraph([line[len(BULLET) :]])]} for line in lines]
+                matches = [match for line in lines if (match := BULLET.match(line)) is not None]
+                items = [{"type": "listItem", "content": [_paragraph([match.group(1)])]} for match in matches]
                 blocks.append({"type": "bulletList", "content": items})
             elif kind == "ordered":
                 matches = [match for line in lines if (match := ORDERED.match(line)) is not None]
@@ -75,7 +77,7 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
 
 def _block_kind(line: str) -> str:
     """Classify a single supported block without interpreting nested Markdown."""
-    if line.startswith(BULLET):
+    if BULLET.match(line):
         return "bullet"
     if ORDERED.match(line):
         return "ordered"
