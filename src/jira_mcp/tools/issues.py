@@ -205,7 +205,7 @@ class CommentPayload(BaseModel):
     updated: str | None = None
     body: Any = None
     visibility: dict[str, Any] | None = None
-    parent_id: str | None = Field(default=None, alias="parentId")
+    parent_id: str | None = Field(default=None, alias="parentId", coerce_numbers_to_str=True)
     jsd_public: bool | None = Field(default=None, alias="jsdPublic")
 
 
