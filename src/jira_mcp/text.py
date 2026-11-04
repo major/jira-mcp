@@ -82,31 +82,49 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
     blocks: list[dict[str, Any]] = []
     for chunk in BLANK_LINES.split(normalized):
         for kind, group in groupby(chunk.split("\n"), key=_block_kind):
-            lines = list(group)
-            if kind == "bullet":
-                matches = [match for line in lines if (match := BULLET.match(line)) is not None]
-                items = [{"type": "listItem", "content": [_paragraph([match.group(1)])]} for match in matches]
-                blocks.append({"type": "bulletList", "content": items})
-            elif kind == "ordered":
-                matches = [match for line in lines if (match := ORDERED.match(line)) is not None]
-                items = [{"type": "listItem", "content": [_paragraph([match.group(2)])]} for match in matches]
-                blocks.append({"type": "orderedList", "attrs": {"order": int(matches[0].group(1))}, "content": items})
-            elif kind == "heading":
-                for line in lines:
-                    match = HEADING.match(line)
-                    if match is None:
-                        continue
-                    paragraph = _paragraph([match.group(2)])
-                    blocks.append(
-                        {
-                            "type": "heading",
-                            "attrs": {"level": len(match.group(1))},
-                            **{key: value for key, value in paragraph.items() if key == "content"},
-                        }
-                    )
-            else:
-                blocks.append(_paragraph(lines))
+            blocks.extend(BLOCK_BUILDERS[kind](list(group), len(blocks)))
     return {"type": "doc", "version": 1, "content": blocks}
+
+
+def _bullet_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one bullet list from consecutive bullet lines."""
+    matches = [match for line in lines if (match := BULLET.match(line)) is not None]
+    items = [{"type": "listItem", "content": [_paragraph([match.group(1)])]} for match in matches]
+    return [{"type": "bulletList", "content": items}]
+
+
+def _ordered_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one ordered list that keeps the first item's number."""
+    matches = [match for line in lines if (match := ORDERED.match(line)) is not None]
+    items = [{"type": "listItem", "content": [_paragraph([match.group(2)])]} for match in matches]
+    return [{"type": "orderedList", "attrs": {"order": int(matches[0].group(1))}, "content": items}]
+
+
+def _heading_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one heading per line, leaving out empty content."""
+    matches = [match for line in lines if (match := HEADING.match(line)) is not None]
+    return [
+        {
+            "type": "heading",
+            "attrs": {"level": len(match.group(1))},
+            **{key: value for key, value in _paragraph([match.group(2)]).items() if key == "content"},
+        }
+        for match in matches
+    ]
+
+
+def _paragraph_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one paragraph from consecutive plain lines."""
+    return [_paragraph(lines)]
+
+
+# Each builder takes the grouped lines and the number of blocks built so far, which keeps generated ids unique.
+BLOCK_BUILDERS = {
+    "bullet": _bullet_blocks,
+    "ordered": _ordered_blocks,
+    "heading": _heading_blocks,
+    "paragraph": _paragraph_blocks,
+}
 
 
 def _block_kind(line: str) -> str:
