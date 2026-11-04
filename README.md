@@ -272,7 +272,8 @@ Issue creation is disabled by default. Set `JIRA_ENABLE_ISSUE_CREATION=true` in 
 environment and restart it to enable issue creation. Falling back to another or legacy server bypasses
 this server's gate; check that server's own controls before using it.
 
-Comments support headings, flat bullet and ordered lists, inline code, bold and italic, and explicit links with
+Comments support headings, flat bullet, ordered, and task lists, fenced code blocks, blockquotes, rules, inline code,
+bold and italic, and explicit links with
 `http`, `https`, or `mailto` schemes. Other Markdown stays literal, and Jira wiki markup (`h3.`,
 `{{code}}`) is not converted. Issue creation and updates accept
 plain-text `description` by default, the same limited Markdown with `description_format: "markdown"`,
@@ -791,11 +792,16 @@ The body supports a small Markdown subset that becomes ADF:
 - lines starting with `- ` or `* ` become bullet list items
 - lines starting with `# ` through `###### ` become headings
 - lines starting with `1. ` become ordered list items, preserving the starting number
+- lines starting with `- [ ] ` or `- [x] ` (or `* `) become task list items
+- lines of three backticks, with an optional language, start and end a code block; blank lines stay inside it,
+  an unclosed block runs to the end, and `~~~` fences are not code blocks
+- lines starting with `> ` (or a bare `>`) become one blockquote paragraph
+- a line of three or more of the same character (`-`, `*`, or `_`) becomes a horizontal rule
 - text in backticks gets the inline `code` mark
 - `**strong**` or `__strong__` and `*emphasis*` or `_emphasis_` get inline marks
 - explicit `[text](url)` links support `http`, `https`, and `mailto` schemes
 
-Other Markdown stays plain text. This is Markdown, not Jira wiki markup: write `### Title`
+Other Markdown (tables, nested lists, strikethrough) stays plain text. This is Markdown, not Jira wiki markup: write `### Title`
 not `h3.`, backticks not `{{code}}`, `**bold**` not `*bold*`, and `1.` not `#`. When the body
 looks like wiki markup, the result includes a `warnings` list. Warnings never block the write,
 so preview with `validate_only` first and fix a posted comment with `edit_issue_comment`. The
