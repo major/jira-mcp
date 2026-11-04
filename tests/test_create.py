@@ -1019,7 +1019,7 @@ async def test_create_description_format(mock_jira, monkeypatch, preview, format
     responses.append(create_metadata("description"))
     if not preview:
         responses.append(httpx2.Response(201, json={"id": "1", "key": "TEAM-1"}))
-    description = "# Heading\n\n**Bold** and `code`\n\n> unsupported"
+    description = "# Heading\n\n**Bold** and `code`\n\n~~unsupported~~"
     options = {
         "project": "TEAM",
         "issue_type_id": "9",
@@ -1054,11 +1054,11 @@ async def test_create_description_format(mock_jira, monkeypatch, preview, format
                         {"type": "text", "text": "code", "marks": [{"type": "code"}]},
                     ],
                 },
-                {"type": "paragraph", "content": [{"type": "text", "text": "> unsupported"}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "~~unsupported~~"}]},
             ],
         }
         rendered = render_text(expected, limit=1000, include_raw=False)["text"]
-        assert all(part in rendered for part in ("Heading", "Bold", "code", "> unsupported"))
+        assert all(part in rendered for part in ("Heading", "Bold", "code", "~~unsupported~~"))
 
 
 @pytest.mark.parametrize(

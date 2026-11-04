@@ -16,6 +16,10 @@ HEADING = re.compile(r"^(#{1,6}) (.*)$")
 # An opening fence has no backticks in its info string, so "```x```" on one line stays text.
 FENCE_OPEN = re.compile(r"^```([^`]*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
+# A bare ">" continues a quote across a blank quoted line, but ">=" stays text.
+QUOTE = re.compile(r"^>(?: (.*))?$")
+# A rule is one line of three or more of the same marker, so "- - -" stays a bullet.
+RULE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})[ \t]*$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
 # Jira wiki markup that the Markdown converter keeps as literal text, with the Markdown advice to give.
@@ -28,7 +32,7 @@ WIKI_MARKUP = (
     ),
     (re.compile(r"\[[^\[\]|\n]+\|https?://[^\]\s]+\]"), "Jira wiki link; write [label](url) instead."),
     (re.compile(r"^\|\|"), "Jira wiki table is not supported; use a bullet list."),
-    (re.compile(r"^\*{2,} "), "Jira wiki nested bullet; nested lists are not supported, use flat bullets."),
+    (re.compile(r"^\*{2,} \S"), "Jira wiki nested bullet; nested lists are not supported, use flat bullets."),
 )
 NUMBERED_HEADINGS = "Two '# ' lines in a row are H1 headings; write '1.' for a numbered list instead of '#'."
 
@@ -110,8 +114,8 @@ def with_warnings(result: dict[str, Any], markdown: str) -> dict[str, Any]:
 def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
-    Support headings, flat lists (dash or star bullets), fenced code blocks, inline code, emphasis, and
-    explicit safe links.
+    Support headings, flat lists (dash or star bullets), fenced code blocks, blockquotes, rules,
+    inline code, emphasis, and explicit safe links.
     Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
@@ -169,6 +173,17 @@ def _heading_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
     ]
 
 
+def _quote_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one blockquote with a single paragraph from consecutive quoted lines."""
+    texts = [match.group(1) or "" for line in lines if (match := QUOTE.match(line)) is not None]
+    return [{"type": "blockquote", "content": [_paragraph(texts)]}]
+
+
+def _rule_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one horizontal rule per line."""
+    return [{"type": "rule"} for _ in lines]
+
+
 def _paragraph_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
     """Build one paragraph from consecutive plain lines."""
     return [_paragraph(lines)]
@@ -179,6 +194,8 @@ BLOCK_BUILDERS = {
     "bullet": _bullet_blocks,
     "ordered": _ordered_blocks,
     "heading": _heading_blocks,
+    "quote": _quote_blocks,
+    "rule": _rule_blocks,
     "paragraph": _paragraph_blocks,
 }
 
@@ -191,6 +208,10 @@ def _block_kind(line: str) -> str:
         return "ordered"
     if HEADING.match(line):
         return "heading"
+    if RULE.match(line):
+        return "rule"
+    if QUOTE.match(line):
+        return "quote"
     return "paragraph"
 
 

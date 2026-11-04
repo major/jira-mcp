@@ -237,8 +237,6 @@ def test_markdown_emphasis(markdown, content):
         ("**bold** x", [_para(_text("bold", strong=True), _text(" x"))]),
         ("*em* line", [_para({"type": "text", "text": "em", "marks": [{"type": "em"}]}, _text(" line"))]),
         ("*a", [_para(_text("*a"))]),
-        ("***", [_para(_text("***"))]),
-        ("---", [_para(_text("---"))]),
     ],
 )
 def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
@@ -253,7 +251,6 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
 @pytest.mark.parametrize(
     ("markdown", "content"),
     [
-        ("> quoted", [_para(_text("> quoted"))]),
         ("- [ ] todo", [_bullets(_para(_text("[ ] todo")))]),
         (
             "- [x](https://example.com)",
@@ -272,7 +269,7 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
     ],
 )
 def test_markdown_block_syntax_stays_literal(markdown, content):
-    """Characterize quotes and task items staying plain text or bullets."""
+    """Characterize task items staying bullets."""
     # Act
     result = markdown_to_adf(markdown)
 
@@ -306,6 +303,39 @@ def _code(code=None, language=None):
 )
 def test_markdown_fenced_code_blocks(markdown, content):
     """Keep fenced lines verbatim, including blank lines, and close only on a bare fence."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+RULE = {"type": "rule"}
+
+
+def _quote(*content):
+    """Build an ADF blockquote around one paragraph of inline content."""
+    return {"type": "blockquote", "content": [_para(*content)]}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("---", [RULE]),
+        ("text\n---\nmore", [_para(_text("text")), RULE, _para(_text("more"))]),
+        ("***\n___\n----  ", [RULE, RULE, RULE]),
+        ("- - -", [_bullets(_para(_text("- -")))]),
+        ("--\n\n  ---", [_para(_text("--")), _para(_text("  ---"))]),
+        ("> a\n> b", [_quote(_text("a"), {"type": "hardBreak"}, _text("b"))]),
+        ("> a\n>\n> b", [_quote(_text("a"), {"type": "hardBreak"}, {"type": "hardBreak"}, _text("b"))]),
+        ("> **x** `y`", [_quote(_text("x", strong=True), _text(" "), _text("y", code=True))]),
+        ("> a\n\n> b", [_quote(_text("a")), _quote(_text("b"))]),
+        ("> - not a list", [_quote(_text("- not a list"))]),
+        (">= 2.0", [_para(_text(">= 2.0"))]),
+    ],
+)
+def test_markdown_rules_and_blockquotes(markdown, content):
+    """Convert rule lines and quoted lines while leaving lookalikes as text."""
     # Act
     result = markdown_to_adf(markdown)
 
@@ -501,6 +531,7 @@ def test_adf_structure_and_fallbacks(body, expected):
         ("see [docs|https://example.com/d]", ["wiki link"]),
         ("||a||b||", ["wiki table"]),
         ("** nested", ["wiki nested bullet"]),
+        ("*** \n___", []),
         ("# one\n# two", ["H1 headings"]),
         ("h3. A\r\n{{x}}", ["wiki heading", "wiki monospace"]),
         ("`h3. Title` and `{{x}}`", []),
