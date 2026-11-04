@@ -192,8 +192,9 @@ async def create_issue(  # noqa: C901, PLR0913 - Explicit arguments and checks k
     Use a project key or numeric ID and an issue type ID from creation metadata.
     Summary is required. Description is up to 100,000 characters, including empty.
     By default it is plain text without Markdown parsing. Set description_format to
-    markdown to use the same limited syntax as comments; description is required
-    and the generated compact UTF-8 ADF must be at most 100,000 bytes.
+    markdown to use the same limited syntax as comments (not Jira wiki markup, which
+    returns a warnings list); description is required and the generated compact
+    UTF-8 ADF must be at most 100,000 bytes.
     Alternatively, description_adf is an ADF document with compact UTF-8 JSON up to
     100,000 bytes. Only its envelope
     is validated; nested ADF is passed unchanged. These inputs are mutually exclusive.

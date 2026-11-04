@@ -273,7 +273,8 @@ environment and restart it to enable issue creation. Falling back to another or 
 this server's gate; check that server's own controls before using it.
 
 Comments support headings, flat bullet and ordered lists, inline code, bold and italic, and explicit links with
-`http`, `https`, or `mailto` schemes. Other Markdown stays literal. Issue creation and updates accept
+`http`, `https`, or `mailto` schemes. Other Markdown stays literal, and Jira wiki markup (`h3.`,
+`{{code}}`) is not converted. Issue creation and updates accept
 plain-text `description` by default, the same limited Markdown with `description_format: "markdown"`,
 or raw `description_adf`. Text extraction is not a lossless Markdown roundtrip.
 
@@ -787,14 +788,19 @@ are omitted, not inferred.
 The body supports a small Markdown subset that becomes ADF:
 
 - blank lines separate paragraphs, and single line breaks are kept
-- lines starting with `- ` become bullet list items
+- lines starting with `- ` or `* ` become bullet list items
 - lines starting with `# ` through `###### ` become headings
 - lines starting with `1. ` become ordered list items, preserving the starting number
 - text in backticks gets the inline `code` mark
 - `**strong**` or `__strong__` and `*emphasis*` or `_emphasis_` get inline marks
 - explicit `[text](url)` links support `http`, `https`, and `mailto` schemes
 
-Other Markdown stays plain text. Bare URLs and issue keys pass through, and Jira
+Other Markdown stays plain text. This is Markdown, not Jira wiki markup: write `### Title`
+not `h3.`, backticks not `{{code}}`, `**bold**` not `*bold*`, and `1.` not `#`. When the body
+looks like wiki markup, the result includes a `warnings` list. Warnings never block the write,
+so preview with `validate_only` first and fix a posted comment with `edit_issue_comment`. The
+same list appears for `edit_issue_comment` with `body`, and for `create_issue` and
+`update_issue` with `description_format: "markdown"`. Bare URLs and issue keys pass through, and Jira
 links them. Bodies can be up to 32,767 characters. Add
 `"visibility": {"type": "role", "value": "Developers"}` (or `"type": "group"`) to
 restrict who can see the comment.

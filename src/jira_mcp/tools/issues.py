@@ -83,7 +83,8 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
 
     Omitted or null arguments leave fields untouched. Summary and priority replace
     their fields. Description defaults to plain text, or set description_format to
-    markdown for the limited comment syntax and the same size limits as create_issue.
+    markdown for the limited comment syntax (not Jira wiki markup, which returns a
+    warnings list) and the same size limits as create_issue.
     Markdown requires description, including an empty string. Alternatively use
     mutually exclusive description_adf for unchanged raw ADF with the same limits.
     Descriptions replace rather than append; an empty plain description clears its
