@@ -1215,7 +1215,7 @@ async def test_update_description_format(mock_jira, monkeypatch, preview, format
     monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", "true")
     if not preview:
         responses.append(httpx2.Response(204))
-    description = "# Heading\n\n**Bold** and `code`\n\n> unsupported"
+    description = "# Heading\n\n**Bold** and `code`\n\n~~unsupported~~"
     options = {"issue": "DEMO-1", "description": description, "validate_only": preview, **format_option}
 
     result = await invoke("update_issue", options)
@@ -1243,11 +1243,11 @@ async def test_update_description_format(mock_jira, monkeypatch, preview, format
                         {"type": "text", "text": "code", "marks": [{"type": "code"}]},
                     ],
                 },
-                {"type": "paragraph", "content": [{"type": "text", "text": "> unsupported"}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "~~unsupported~~"}]},
             ],
         }
         rendered = render_text(expected, limit=1000, include_raw=False)["text"]
-        assert all(part in rendered for part in ("Heading", "Bold", "code", "> unsupported"))
+        assert all(part in rendered for part in ("Heading", "Bold", "code", "~~unsupported~~"))
 
 
 @pytest.mark.parametrize(

@@ -237,8 +237,6 @@ def test_markdown_emphasis(markdown, content):
         ("**bold** x", [_para(_text("bold", strong=True), _text(" x"))]),
         ("*em* line", [_para({"type": "text", "text": "em", "marks": [{"type": "em"}]}, _text(" line"))]),
         ("*a", [_para(_text("*a"))]),
-        ("***", [_para(_text("***"))]),
-        ("---", [_para(_text("---"))]),
     ],
 )
 def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
@@ -248,6 +246,158 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
 
     # Assert
     assert result == {"type": "doc", "version": 1, "content": content}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        (
+            "- [x](https://example.com)",
+            [
+                _bullets(
+                    _para(
+                        {
+                            "type": "text",
+                            "text": "x",
+                            "marks": [{"type": "link", "attrs": {"href": "https://example.com"}}],
+                        }
+                    )
+                )
+            ],
+        ),
+    ],
+)
+def test_markdown_block_syntax_stays_literal(markdown, content):
+    """Characterize a Markdown link in a bullet staying a bullet, not a task."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+def _code(code=None, language=None):
+    """Build an ADF code block, leaving out empty content and absent language."""
+    block = {"type": "codeBlock"}
+    if language:
+        block["attrs"] = {"language": language}
+    if code:
+        block["content"] = [{"type": "text", "text": code}]
+    return block
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("```\ncode\n```", [_code("code")]),
+        ("```python extra\nx = 1\n\n  y = 2\n```", [_code("x = 1\n\n  y = 2", "python")]),
+        ("intro\n```sh\nls\n```\noutro", [_para(_text("intro")), _code("ls", "sh"), _para(_text("outro"))]),
+        ("```\n```", [_code()]),
+        ("```\nopen\n\n- not a list", [_code("open\n\n- not a list")]),
+        ("```\n- a\n# b\n**c**\n```  ", [_code("- a\n# b\n**c**")]),
+        ("```x```", [_para(_text("``"), _text("x", code=True), _text("``"))]),
+        ("```\na\n```\n\n```\nb\n```", [_code("a"), _code("b")]),
+        ("```\n```python\n```", [_code("```python")]),
+    ],
+)
+def test_markdown_fenced_code_blocks(markdown, content):
+    """Keep fenced lines verbatim, including blank lines, and close only on a bare fence."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+RULE = {"type": "rule"}
+
+
+def _quote(*content):
+    """Build an ADF blockquote around one paragraph of inline content."""
+    return {"type": "blockquote", "content": [_para(*content)]}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("---", [RULE]),
+        ("text\n---\nmore", [_para(_text("text")), RULE, _para(_text("more"))]),
+        ("***\n___\n----  ", [RULE, RULE, RULE]),
+        ("- - -", [_bullets(_para(_text("- -")))]),
+        ("--\n\n  ---", [_para(_text("--")), _para(_text("  ---"))]),
+        ("> a\n> b", [_quote(_text("a"), {"type": "hardBreak"}, _text("b"))]),
+        ("> a\n>\n> b", [_quote(_text("a"), {"type": "hardBreak"}, {"type": "hardBreak"}, _text("b"))]),
+        ("> **x** `y`", [_quote(_text("x", strong=True), _text(" "), _text("y", code=True))]),
+        ("> a\n\n> b", [_quote(_text("a")), _quote(_text("b"))]),
+        ("> - not a list", [_quote(_text("- not a list"))]),
+        (">= 2.0", [_para(_text(">= 2.0"))]),
+    ],
+)
+def test_markdown_rules_and_blockquotes(markdown, content):
+    """Convert rule lines and quoted lines while leaving lookalikes as text."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+def _task(position, number, state, *content):
+    """Build an ADF task item with a position-based id and inline content."""
+    item = {"type": "taskItem", "attrs": {"localId": f"task-{position}-{number}", "state": state}}
+    if content:
+        item["content"] = list(content)
+    return item
+
+
+def _task_list(position, *items):
+    """Build an ADF task list with a position-based id."""
+    return {"type": "taskList", "attrs": {"localId": f"tasklist-{position}"}, "content": list(items)}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        (
+            "- [ ] todo\n- [x] done **b**\n* [X] star",
+            [
+                _task_list(
+                    0,
+                    _task(0, 1, "TODO", _text("todo")),
+                    _task(0, 2, "DONE", _text("done "), _text("b", strong=True)),
+                    _task(0, 3, "DONE", _text("star")),
+                )
+            ],
+        ),
+        ("- [ ]", [_task_list(0, _task(0, 1, "TODO"))]),
+        ("- [ ]text", [_bullets(_para(_text("[ ]text")))]),
+        ("- [ ] a\n- b", [_task_list(0, _task(0, 1, "TODO", _text("a"))), _bullets(_para(_text("b")))]),
+        (
+            "intro\n\n- [ ] a\n\n- [x] b",
+            [
+                _para(_text("intro")),
+                _task_list(1, _task(1, 1, "TODO", _text("a"))),
+                _task_list(2, _task(2, 1, "DONE", _text("b"))),
+            ],
+        ),
+    ],
+)
+def test_markdown_task_lists(markdown, content):
+    """Convert checkbox bullets to task lists with stable ids, leaving lookalikes as bullets."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+def test_markdown_task_list_round_trips_through_rendering():
+    """Render a converted task list as the checklist text that read tools show."""
+    # Act
+    rendered = render_text(markdown_to_adf("- [ ] todo\n- [x] done"), limit=100, include_raw=False)
+
+    # Assert
+    assert rendered["text"] == "- [ ] todo\n- [x] done"
 
 
 @pytest.mark.parametrize("level", range(1, 7))
@@ -438,11 +588,14 @@ def test_adf_structure_and_fallbacks(body, expected):
         ("see [docs|https://example.com/d]", ["wiki link"]),
         ("||a||b||", ["wiki table"]),
         ("** nested", ["wiki nested bullet"]),
+        ("*** \n___", []),
         ("# one\n# two", ["H1 headings"]),
         ("h3. A\r\n{{x}}", ["wiki heading", "wiki monospace"]),
         ("`h3. Title` and `{{x}}`", []),
         ("`open\nh3. Title\nclose`", ["wiki heading"]),
         ("# one\ntext\n# two", []),
+        ("```\nh3. Title\n{{x}}\n```", []),
+        ("# one\n```\nx\n```\n# two", []),
         ("### Title\n**bold** [docs](https://example.com)\n1. one", []),
     ],
 )
