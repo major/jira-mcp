@@ -3,18 +3,32 @@
 import hashlib
 import json
 import re
-from itertools import groupby
+from itertools import groupby, pairwise
 from typing import Any
 
 # Split on one or more blank lines (lines with only whitespace count as blank).
 BLANK_LINES = re.compile(r"\n(?:[^\S\n]*\n)+")
 # The capture group makes re.split put each code span at an odd index.
 INLINE_CODE = re.compile(r"`([^`]+)`")
-BULLET = "- "
+# A dash or star followed by a space starts a bullet; "**bold**" and "*em*" do not match.
+BULLET = re.compile(r"^[-*] (.*)$")
 HEADING = re.compile(r"^(#{1,6}) (.*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
+# Jira wiki markup that the Markdown converter keeps as literal text, with the Markdown advice to give.
+WIKI_MARKUP = (
+    (re.compile(r"^h[1-6]\. "), "Jira wiki heading; write '### Title' instead of 'h3. Title'."),
+    (re.compile(r"\{\{[^{}\n]+\}\}"), "Jira wiki monospace; wrap code in backticks instead of {{ }}."),
+    (
+        re.compile(r"(?<!\{)\{(?:code|noformat|quote|panel)\b[^}]*\}"),
+        "Jira wiki block macro is not supported; use backticks.",
+    ),
+    (re.compile(r"\[[^\[\]|\n]+\|https?://[^\]\s]+\]"), "Jira wiki link; write [label](url) instead."),
+    (re.compile(r"^\|\|"), "Jira wiki table is not supported; use a bullet list."),
+    (re.compile(r"^\*{2,} "), "Jira wiki nested bullet; nested lists are not supported, use flat bullets."),
+)
+NUMBERED_HEADINGS = "Two '# ' lines in a row are H1 headings; write '1.' for a numbered list instead of '#'."
 
 
 def hash_adf(adf: dict[str, Any]) -> str:
@@ -36,10 +50,31 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
     return {"type": "doc", "version": 1, "content": paragraphs}
 
 
+def find_markup_warnings(text: str) -> list[str]:
+    """Report Jira wiki markup in Markdown input that the converter would render wrongly.
+
+    Lines are checked one at a time with inline backtick code spans removed, so inline code
+    never triggers a warning and one stray backtick cannot hide later lines.
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    # The capture group in INLINE_CODE puts text outside code spans at the even indexes.
+    outside = ["".join(INLINE_CODE.split(line)[::2]) for line in lines]
+    found = [advice for pattern, advice in WIKI_MARKUP if any(pattern.search(line) for line in outside)]
+    if any(first.startswith("# ") and second.startswith("# ") for first, second in pairwise(outside)):
+        found.append(NUMBERED_HEADINGS)
+    return found
+
+
+def with_warnings(result: dict[str, Any], markdown: str) -> dict[str, Any]:
+    """Add a warnings list to a tool result when the Markdown input looks like wiki markup."""
+    warnings = find_markup_warnings(markdown)
+    return {**result, "warnings": warnings} if warnings else result
+
+
 def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
-    Support headings, flat lists, inline code, emphasis, and explicit safe links.
+    Support headings, flat lists (dash or star bullets), inline code, emphasis, and explicit safe links.
     Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
@@ -49,7 +84,8 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
         for kind, group in groupby(chunk.split("\n"), key=_block_kind):
             lines = list(group)
             if kind == "bullet":
-                items = [{"type": "listItem", "content": [_paragraph([line[len(BULLET) :]])]} for line in lines]
+                matches = [match for line in lines if (match := BULLET.match(line)) is not None]
+                items = [{"type": "listItem", "content": [_paragraph([match.group(1)])]} for match in matches]
                 blocks.append({"type": "bulletList", "content": items})
             elif kind == "ordered":
                 matches = [match for line in lines if (match := ORDERED.match(line)) is not None]
@@ -75,7 +111,7 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
 
 def _block_kind(line: str) -> str:
     """Classify a single supported block without interpreting nested Markdown."""
-    if line.startswith(BULLET):
+    if BULLET.match(line):
         return "bullet"
     if ORDERED.match(line):
         return "ordered"

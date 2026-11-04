@@ -21,7 +21,7 @@ Keep the API token-lean rather than mirroring every Jira endpoint. No Data Cente
 - `common.py`: shared argument types, tool annotations, and payload helpers.
 - `fields.py`: field catalog models and the lifespan catalog cache.
 - `create_metadata.py`: create-metadata models and pure checks for planned issue fields.
-- `text.py`: plain text to ADF and best-effort extraction with optional raw recovery.
+- `text.py`: plain text and Markdown to ADF, wiki markup warnings, and best-effort extraction with optional raw recovery.
 - `tools/`: one module per area (`users`, `issues`, `comments`, `assign`, `fields`, `create`, `transitions`, `links`).
   Every `@mcp.tool` lives here, and `tools/__init__.py` imports each module so it registers.
 

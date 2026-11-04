@@ -21,10 +21,21 @@ from jira_mcp.common import (
     validate_description_adf,
     validate_payload,
 )
-from jira_mcp.text import hash_adf, markdown_to_adf, render_text
+from jira_mcp.text import hash_adf, markdown_to_adf, render_text, with_warnings
 
 # Jira Cloud limits comments to 32,767 characters of stored ADF, so this local cap is approximate.
-CommentBody = Annotated[str, Field(min_length=1, max_length=32_767, pattern=r"\S")]
+CommentBody = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=32_767,
+        pattern=r"\S",
+        description=(
+            "Markdown, not Jira wiki markup: write '### Title' not 'h3.', backticks not {{ }}, "
+            "'**bold**' not '*bold*', and '1.' not '#' for numbered lists."
+        ),
+    ),
+]
 
 
 COMMENT_UNCERTAIN = "The comment may already exist; check get_issue_comments before retrying."
@@ -116,7 +127,8 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
     and body_hash with get_issue_comments(include_raw_adf=true, include_hashes=true)
     and retain unrelated nodes. Raw ADF validation checks only the document envelope
     and 100,000 compact UTF-8 JSON bytes, not nested Jira validation.
-    Text replacements preserve newlines literally and cannot span nodes. Preview performs
+    A Markdown body is checked for Jira wiki markup and the result lists any warnings.
+    Text replacements preserve newlines literally, are not parsed as Markdown, and cannot span nodes. Preview performs
     a GET and returns ADF, hashes and a bounded, lossy text diff, not a complete ADF diff.
     Use the preview before_hash, not after_hash, as the optional guard for execution.
     The optional hash checks the complete original ADF, but GET and PUT are not atomic
@@ -159,7 +171,7 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
     after_hash = hash_adf(edited)
     if validate_only:
         diff, truncated = _comment_diff(original, edited)
-        return {
+        preview = {
             "issue": issue,
             "comment_id": comment_id,
             "validate_only": True,
@@ -169,6 +181,7 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
             "diff": diff,
             "diff_truncated": truncated,
         }
+        return with_warnings(preview, body or "")
     try:
         await client.put(path, {"body": edited})
     except ToolError as exc:
@@ -182,7 +195,8 @@ async def edit_issue_comment(  # noqa: C901, PLR0912, PLR0913
             raise ToolError(msg) from None
         msg = "The edit outcome is unknown; inspect get_issue_comments before retrying."
         raise ToolError(msg) from None
-    return {"issue": issue, "comment_id": comment_id, "updated": True, "body_hash": after_hash}
+    result = {"issue": issue, "comment_id": comment_id, "updated": True, "body_hash": after_hash}
+    return with_warnings(result, body or "")
 
 
 class Visibility(BaseModel):
@@ -214,7 +228,9 @@ async def add_issue_comment(
     Blank lines separate paragraphs and single line breaks are kept. The converter
     supports headings, flat bullet and ordered lists, inline code, bold and italic, and explicit
     http, https, or mailto links. Other Markdown stays plain text. Bare URLs and
-    issue keys pass through for Jira to link.
+    issue keys pass through for Jira to link. Write Markdown, not Jira wiki markup
+    (h3., {{code}}, {code}). If the result has a warnings list, the body looks like wiki
+    markup: preview with validate_only first, and fix a posted comment with edit_issue_comment.
     Visibility limits the comment to a group or project role. validate_only returns
     the ADF that would be sent without any request. Otherwise this makes exactly one
     POST that is never retried. If it fails, times out, or is cancelled, the comment
@@ -222,7 +238,7 @@ async def add_issue_comment(
     """
     adf = markdown_to_adf(body)
     if validate_only:
-        return {"validate_only": True, "issue": issue, "adf": adf}
+        return with_warnings({"validate_only": True, "issue": issue, "adf": adf}, body)
     payload: dict[str, Any] = {"body": adf}
     if visibility is not None:
         payload["visibility"] = visibility.model_dump()
@@ -234,4 +250,4 @@ async def add_issue_comment(
     except ToolError as exc:
         message = f"{str(exc).rstrip('.')}. {COMMENT_UNCERTAIN}"
         raise ToolError(message) from None
-    return {"id": created.id, "issue": issue, "created": created.created}
+    return with_warnings({"id": created.id, "issue": issue, "created": created.created}, body)

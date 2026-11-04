@@ -7,7 +7,7 @@ import json
 import httpx2
 import pytest
 
-from jira_mcp.text import markdown_to_adf
+from jira_mcp.text import find_markup_warnings, markdown_to_adf
 from tests.helpers import invoke
 
 pytestmark = pytest.mark.usefixtures("jira_env")
@@ -48,6 +48,48 @@ async def test_validate_only_returns_adf_without_requests(mock_jira, monkeypatch
     assert not result.is_error
     assert result.structured_content == {"validate_only": True, "issue": "DEMO-1", "adf": markdown_to_adf(BODY)}
     assert requests == []
+
+
+WIKI_BODY = "h3. Title\nuse {{code}}"
+
+
+async def test_add_comment_warns_about_wiki_markup_in_preview_and_write(mock_jira):
+    """Return wiki markup warnings for a preview and for a real write that still posts."""
+    # Arrange
+    requests, responses = mock_jira
+    responses.append(httpx2.Response(201, json={"id": "7", "created": "2026-10-29T12:00:00.000+0000"}))
+
+    # Act
+    preview = await invoke("add_issue_comment", {"issue": "DEMO-1", "body": WIKI_BODY, "validate_only": True})
+    written = await invoke("add_issue_comment", {"issue": "DEMO-1", "body": WIKI_BODY})
+
+    # Assert
+    expected = find_markup_warnings(WIKI_BODY)
+    assert [result.structured_content["warnings"] for result in (preview, written)] == [expected, expected]
+    assert written.structured_content["id"] == "7"
+    assert [request.method for request in requests] == ["POST"]
+
+
+@pytest.mark.parametrize("preview", [True, False])
+async def test_edit_body_warns_about_wiki_markup_but_text_replacement_does_not(mock_jira, edit_document, preview):
+    """Warn for Markdown body edits only, because old_text and new_text are literal."""
+    # Arrange
+    _, responses = mock_jira
+    for _ in range(2):
+        responses.append(httpx2.Response(200, json={"body": edit_document}))
+        if not preview:
+            responses.append(httpx2.Response(204))
+    base = {"issue": "DEMO-1", "comment_id": "42", "validate_only": preview}
+
+    # Act
+    body = await invoke("edit_issue_comment", {**base, "body": WIKI_BODY})
+    replaced = await invoke(
+        "edit_issue_comment", {**base, "old_text": "café", "new_text": WIKI_BODY, "replace_all": True}
+    )
+
+    # Assert
+    assert body.structured_content["warnings"] == find_markup_warnings(WIKI_BODY)
+    assert "warnings" not in replaced.structured_content
 
 
 async def test_preview_contains_emphasis_marks(mock_jira):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from jira_mcp.text import markdown_to_adf, plain_text_to_adf, render_text
+from jira_mcp.text import find_markup_warnings, markdown_to_adf, plain_text_to_adf, render_text, with_warnings
 
 
 def _task(state, *content):
@@ -63,9 +63,13 @@ def _para(*content):
     return {"type": "paragraph", "content": list(content)} if content else {"type": "paragraph"}
 
 
-def _text(text, *, code=False):
-    """Build an ADF text node, optionally with a code mark."""
-    return {"type": "text", "text": text, "marks": [{"type": "code"}]} if code else {"type": "text", "text": text}
+def _text(text, *, code=False, strong=False):
+    """Build an ADF text node, optionally with a code or strong mark."""
+    if code:
+        return {"type": "text", "text": text, "marks": [{"type": "code"}]}
+    if strong:
+        return {"type": "text", "text": text, "marks": [{"type": "strong"}]}
+    return {"type": "text", "text": text}
 
 
 def _bullets(*items):
@@ -188,7 +192,7 @@ def test_markdown_extended_subset():
         ("snake_case_identifier foo__bar__baz", [_text("snake_case_identifier foo__bar__baz")]),
         ("a * b * c", [_text("a * b * c")]),
         ("unmatched **marker", [_text("unmatched **marker")]),
-        ("* spaced* and *end *", [_text("* spaced* and *end *")]),
+        ("x * spaced* and *end *", [_text("x * spaced* and *end *")]),
         ("***unsupported***", [_text("***unsupported***")]),
         (
             "**a`code`**",
@@ -220,6 +224,30 @@ def test_markdown_emphasis(markdown, content):
 
     # Assert
     assert result == {"type": "doc", "version": 1, "content": [_para(*content)]}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("h3. Title", [_para(_text("h3. Title"))]),
+        ("use {{code}} here", [_para(_text("use {{code}} here"))]),
+        ("* item", [_bullets(_para(_text("item")))]),
+        ("- a\n* b", [_bullets(_para(_text("a")), _para(_text("b")))]),
+        ("* text*", [_bullets(_para(_text("text*")))]),
+        ("**bold** x", [_para(_text("bold", strong=True), _text(" x"))]),
+        ("*em* line", [_para({"type": "text", "text": "em", "marks": [{"type": "em"}]}, _text(" line"))]),
+        ("*a", [_para(_text("*a"))]),
+        ("***", [_para(_text("***"))]),
+        ("---", [_para(_text("---"))]),
+    ],
+)
+def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
+    """Keep wiki markup literal and treat dash or star plus a space as a bullet."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
 
 
 @pytest.mark.parametrize("level", range(1, 7))
@@ -399,3 +427,40 @@ def test_adf_structure_and_fallbacks(body, expected):
     result = render_text(body, limit=1000, include_raw=True)
 
     assert result == {"text": expected, "characters": len(expected), "truncated": False, "adf": body}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("h3. Title", ["wiki heading"]),
+        ("use {{code}} here", ["wiki monospace"]),
+        ("{code:python}\nx = 1\n{code}", ["wiki block macro"]),
+        ("see [docs|https://example.com/d]", ["wiki link"]),
+        ("||a||b||", ["wiki table"]),
+        ("** nested", ["wiki nested bullet"]),
+        ("# one\n# two", ["H1 headings"]),
+        ("h3. A\r\n{{x}}", ["wiki heading", "wiki monospace"]),
+        ("`h3. Title` and `{{x}}`", []),
+        ("`open\nh3. Title\nclose`", ["wiki heading"]),
+        ("# one\ntext\n# two", []),
+        ("### Title\n**bold** [docs](https://example.com)\n1. one", []),
+    ],
+)
+def test_find_markup_warnings(text, expected):
+    """Warn once per wiki construct, skipping code spans and valid Markdown."""
+    # Act
+    warnings = find_markup_warnings(text)
+
+    # Assert
+    assert len(warnings) == len(expected)
+    assert all(part in warning for part, warning in zip(expected, warnings, strict=True))
+
+
+def test_with_warnings_adds_key_only_when_needed():
+    """Keep the result unchanged unless the Markdown looks like wiki markup."""
+    # Arrange
+    result = {"id": "1"}
+
+    # Act and Assert
+    assert with_warnings(result, "clean **text**") == {"id": "1"}
+    assert with_warnings(result, "h3. Title")["warnings"] == find_markup_warnings("h3. Title")
