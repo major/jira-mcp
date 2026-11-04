@@ -222,6 +222,23 @@ def test_markdown_emphasis(markdown, content):
     assert result == {"type": "doc", "version": 1, "content": [_para(*content)]}
 
 
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("h3. Title", [_para(_text("h3. Title"))]),
+        ("use {{code}} here", [_para(_text("use {{code}} here"))]),
+        ("* item", [_para(_text("* item"))]),
+    ],
+)
+def test_markdown_leaves_wiki_markup_and_star_bullets_literal(markdown, content):
+    """Characterize wiki headings, wiki monospace, and star bullets staying plain text."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
 @pytest.mark.parametrize("level", range(1, 7))
 def test_markdown_heading_levels(level):
     """Support each ADF heading level."""
