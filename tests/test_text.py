@@ -250,6 +250,40 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
     assert result == {"type": "doc", "version": 1, "content": content}
 
 
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        (
+            "```\ncode\n```",
+            [_para(_text("```"), {"type": "hardBreak"}, _text("code"), {"type": "hardBreak"}, _text("```"))],
+        ),
+        ("> quoted", [_para(_text("> quoted"))]),
+        ("- [ ] todo", [_bullets(_para(_text("[ ] todo")))]),
+        (
+            "- [x](https://example.com)",
+            [
+                _bullets(
+                    _para(
+                        {
+                            "type": "text",
+                            "text": "x",
+                            "marks": [{"type": "link", "attrs": {"href": "https://example.com"}}],
+                        }
+                    )
+                )
+            ],
+        ),
+    ],
+)
+def test_markdown_block_syntax_stays_literal(markdown, content):
+    """Characterize fenced code, quotes, and task items staying plain text or bullets."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
 @pytest.mark.parametrize("level", range(1, 7))
 def test_markdown_heading_levels(level):
     """Support each ADF heading level."""
