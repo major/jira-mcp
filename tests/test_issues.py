@@ -1167,8 +1167,13 @@ async def test_anonymous_comment_and_last_page(mock_jira):
     assert result.structured_content["comments"][0]["visibility"] == {"type": "role", "value": "Readers"}
 
 
-async def test_comment_reply_and_internal_visibility(mock_jira):
-    """Preserve reply context and distinguish internal notes from public comments."""
+@pytest.mark.parametrize("wire_parent_id", ["1", 1], ids=["string", "integer"])
+async def test_comment_reply_and_internal_visibility(mock_jira, wire_parent_id):
+    """Preserve reply context, whether Jira sends parentId as a string or an integer.
+
+    Jira Cloud sends an integer parentId on reply comments, so a string-only
+    schema rejected the whole page.
+    """
     _, responses = mock_jira
     responses.append(
         httpx2.Response(
@@ -1176,7 +1181,7 @@ async def test_comment_reply_and_internal_visibility(mock_jira):
             json={
                 "startAt": 0,
                 "total": 1,
-                "comments": [{"id": "2", "parentId": "1", "jsdPublic": False, "body": "Use this one"}],
+                "comments": [{"id": "2", "parentId": wire_parent_id, "jsdPublic": False, "body": "Use this one"}],
             },
         )
     )
