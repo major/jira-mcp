@@ -253,10 +253,6 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
 @pytest.mark.parametrize(
     ("markdown", "content"),
     [
-        (
-            "```\ncode\n```",
-            [_para(_text("```"), {"type": "hardBreak"}, _text("code"), {"type": "hardBreak"}, _text("```"))],
-        ),
         ("> quoted", [_para(_text("> quoted"))]),
         ("- [ ] todo", [_bullets(_para(_text("[ ] todo")))]),
         (
@@ -276,7 +272,40 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
     ],
 )
 def test_markdown_block_syntax_stays_literal(markdown, content):
-    """Characterize fenced code, quotes, and task items staying plain text or bullets."""
+    """Characterize quotes and task items staying plain text or bullets."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+def _code(code=None, language=None):
+    """Build an ADF code block, leaving out empty content and absent language."""
+    block = {"type": "codeBlock"}
+    if language:
+        block["attrs"] = {"language": language}
+    if code:
+        block["content"] = [{"type": "text", "text": code}]
+    return block
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        ("```\ncode\n```", [_code("code")]),
+        ("```python extra\nx = 1\n\n  y = 2\n```", [_code("x = 1\n\n  y = 2", "python")]),
+        ("intro\n```sh\nls\n```\noutro", [_para(_text("intro")), _code("ls", "sh"), _para(_text("outro"))]),
+        ("```\n```", [_code()]),
+        ("```\nopen\n\n- not a list", [_code("open\n\n- not a list")]),
+        ("```\n- a\n# b\n**c**\n```  ", [_code("- a\n# b\n**c**")]),
+        ("```x```", [_para(_text("``"), _text("x", code=True), _text("``"))]),
+        ("```\na\n```\n\n```\nb\n```", [_code("a"), _code("b")]),
+        ("```\n```python\n```", [_code("```python")]),
+    ],
+)
+def test_markdown_fenced_code_blocks(markdown, content):
+    """Keep fenced lines verbatim, including blank lines, and close only on a bare fence."""
     # Act
     result = markdown_to_adf(markdown)
 
@@ -477,6 +506,8 @@ def test_adf_structure_and_fallbacks(body, expected):
         ("`h3. Title` and `{{x}}`", []),
         ("`open\nh3. Title\nclose`", ["wiki heading"]),
         ("# one\ntext\n# two", []),
+        ("```\nh3. Title\n{{x}}\n```", []),
+        ("# one\n```\nx\n```\n# two", []),
         ("### Title\n**bold** [docs](https://example.com)\n1. one", []),
     ],
 )

@@ -13,6 +13,8 @@ INLINE_CODE = re.compile(r"`([^`]+)`")
 # A dash or star followed by a space starts a bullet; "**bold**" and "*em*" do not match.
 BULLET = re.compile(r"^[-*] (.*)$")
 HEADING = re.compile(r"^(#{1,6}) (.*)$")
+# An opening fence has no backticks in its info string, so "```x```" on one line stays text.
+FENCE_OPEN = re.compile(r"^```([^`]*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
@@ -50,13 +52,47 @@ def plain_text_to_adf(text: str) -> dict[str, Any]:
     return {"type": "doc", "version": 1, "content": paragraphs}
 
 
+def _segments(lines: list[str]) -> list[tuple[str, str, list[str]]]:
+    """Split lines into ("text", "", lines) and ("code", info, lines) segments.
+
+    A fence opens on a line of three backticks plus an optional info string and closes on a line of
+    exactly three backticks. An unclosed fence runs to the end, as in CommonMark.
+    """
+    segments: list[tuple[str, str, list[str]]] = []
+    text: list[str] = []
+    index = 0
+    while index < len(lines):
+        opening = FENCE_OPEN.match(lines[index])
+        if opening is None:
+            text.append(lines[index])
+            index += 1
+            continue
+        if text:
+            segments.append(("text", "", text))
+            text = []
+        code: list[str] = []
+        index += 1
+        while index < len(lines) and lines[index].rstrip() != "```":
+            code.append(lines[index])
+            index += 1
+        segments.append(("code", opening.group(1).strip(), code))
+        index += 1
+    if text:
+        segments.append(("text", "", text))
+    return segments
+
+
 def find_markup_warnings(text: str) -> list[str]:
     """Report Jira wiki markup in Markdown input that the converter would render wrongly.
 
     Lines are checked one at a time with inline backtick code spans removed, so inline code
-    never triggers a warning and one stray backtick cannot hide later lines.
+    never triggers a warning and one stray backtick cannot hide later lines. Fenced code blocks
+    are skipped.
     """
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines: list[str] = []
+    for kind, _, segment in _segments(text.replace("\r\n", "\n").replace("\r", "\n").split("\n")):
+        # A blank line stands in for a fence so lines around it do not look adjacent.
+        lines.extend(segment if kind == "text" else [""])
     # The capture group in INLINE_CODE puts text outside code spans at the even indexes.
     outside = ["".join(INLINE_CODE.split(line)[::2]) for line in lines]
     found = [advice for pattern, advice in WIKI_MARKUP if any(pattern.search(line) for line in outside)]
@@ -74,16 +110,36 @@ def with_warnings(result: dict[str, Any], markdown: str) -> dict[str, Any]:
 def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
-    Support headings, flat lists (dash or star bullets), inline code, emphasis, and explicit safe links.
+    Support headings, flat lists (dash or star bullets), fenced code blocks, inline code, emphasis, and
+    explicit safe links.
     Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     blocks: list[dict[str, Any]] = []
-    for chunk in BLANK_LINES.split(normalized):
-        for kind, group in groupby(chunk.split("\n"), key=_block_kind):
-            blocks.extend(BLOCK_BUILDERS[kind](list(group), len(blocks)))
-    return {"type": "doc", "version": 1, "content": blocks}
+    for kind, info, lines in _segments(normalized.split("\n")):
+        if kind == "code":
+            blocks.append(_code_block(info, lines))
+            continue
+        # Stripping each text segment keeps a fence from leaving a stray break or an empty paragraph.
+        segment = "\n".join(lines).strip()
+        for chunk in BLANK_LINES.split(segment) if segment else []:
+            for block_kind, group in groupby(chunk.split("\n"), key=_block_kind):
+                blocks.extend(BLOCK_BUILDERS[block_kind](list(group), len(blocks)))
+    # An empty or whitespace-only input still needs one block to be a valid document.
+    return {"type": "doc", "version": 1, "content": blocks or [{"type": "paragraph"}]}
+
+
+def _code_block(info: str, lines: list[str]) -> dict[str, Any]:
+    """Build a code block from raw lines, keeping the first info word as its language."""
+    block: dict[str, Any] = {"type": "codeBlock"}
+    if info:
+        block["attrs"] = {"language": info.split(maxsplit=1)[0]}
+    code = "\n".join(lines)
+    # ADF text nodes must not be empty, so an empty fence has no content.
+    if code:
+        block["content"] = [{"type": "text", "text": code}]
+    return block
 
 
 def _bullet_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
