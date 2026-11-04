@@ -92,6 +92,25 @@ async def test_edit_body_warns_about_wiki_markup_but_text_replacement_does_not(m
     assert "warnings" not in replaced.structured_content
 
 
+async def test_add_comment_preview_converts_block_syntax_without_fenced_warnings(mock_jira):
+    """Preview code, quote, rule, and task blocks, and ignore wiki-looking text inside the fence."""
+    # Arrange
+    body = "```yaml\nimage: {{ .Values.image }}\n```\n\n> quoted\n\n---\n\n- [ ] todo"
+
+    # Act
+    result = await invoke("add_issue_comment", {"issue": "DEMO-1", "body": body, "validate_only": True})
+
+    # Assert
+    assert not result.is_error
+    assert [node["type"] for node in result.structured_content["adf"]["content"]] == [
+        "codeBlock",
+        "blockquote",
+        "rule",
+        "taskList",
+    ]
+    assert "warnings" not in result.structured_content
+
+
 async def test_preview_contains_emphasis_marks(mock_jira):
     """Expose bold and italic ADF marks in the public comment preview."""
     # Arrange

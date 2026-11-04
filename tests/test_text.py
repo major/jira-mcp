@@ -251,7 +251,6 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
 @pytest.mark.parametrize(
     ("markdown", "content"),
     [
-        ("- [ ] todo", [_bullets(_para(_text("[ ] todo")))]),
         (
             "- [x](https://example.com)",
             [
@@ -269,7 +268,7 @@ def test_markdown_wiki_markup_and_bullet_markers(markdown, content):
     ],
 )
 def test_markdown_block_syntax_stays_literal(markdown, content):
-    """Characterize task items staying bullets."""
+    """Characterize a Markdown link in a bullet staying a bullet, not a task."""
     # Act
     result = markdown_to_adf(markdown)
 
@@ -341,6 +340,64 @@ def test_markdown_rules_and_blockquotes(markdown, content):
 
     # Assert
     assert result == {"type": "doc", "version": 1, "content": content}
+
+
+def _task(position, number, state, *content):
+    """Build an ADF task item with a position-based id and inline content."""
+    item = {"type": "taskItem", "attrs": {"localId": f"task-{position}-{number}", "state": state}}
+    if content:
+        item["content"] = list(content)
+    return item
+
+
+def _task_list(position, *items):
+    """Build an ADF task list with a position-based id."""
+    return {"type": "taskList", "attrs": {"localId": f"tasklist-{position}"}, "content": list(items)}
+
+
+@pytest.mark.parametrize(
+    ("markdown", "content"),
+    [
+        (
+            "- [ ] todo\n- [x] done **b**\n* [X] star",
+            [
+                _task_list(
+                    0,
+                    _task(0, 1, "TODO", _text("todo")),
+                    _task(0, 2, "DONE", _text("done "), _text("b", strong=True)),
+                    _task(0, 3, "DONE", _text("star")),
+                )
+            ],
+        ),
+        ("- [ ]", [_task_list(0, _task(0, 1, "TODO"))]),
+        ("- [ ]text", [_bullets(_para(_text("[ ]text")))]),
+        ("- [ ] a\n- b", [_task_list(0, _task(0, 1, "TODO", _text("a"))), _bullets(_para(_text("b")))]),
+        (
+            "intro\n\n- [ ] a\n\n- [x] b",
+            [
+                _para(_text("intro")),
+                _task_list(1, _task(1, 1, "TODO", _text("a"))),
+                _task_list(2, _task(2, 1, "DONE", _text("b"))),
+            ],
+        ),
+    ],
+)
+def test_markdown_task_lists(markdown, content):
+    """Convert checkbox bullets to task lists with stable ids, leaving lookalikes as bullets."""
+    # Act
+    result = markdown_to_adf(markdown)
+
+    # Assert
+    assert result == {"type": "doc", "version": 1, "content": content}
+
+
+def test_markdown_task_list_round_trips_through_rendering():
+    """Render a converted task list as the checklist text that read tools show."""
+    # Act
+    rendered = render_text(markdown_to_adf("- [ ] todo\n- [x] done"), limit=100, include_raw=False)
+
+    # Assert
+    assert rendered["text"] == "- [ ] todo\n- [x] done"
 
 
 @pytest.mark.parametrize("level", range(1, 7))

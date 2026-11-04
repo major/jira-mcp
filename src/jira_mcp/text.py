@@ -13,6 +13,8 @@ INLINE_CODE = re.compile(r"`([^`]+)`")
 # A dash or star followed by a space starts a bullet; "**bold**" and "*em*" do not match.
 BULLET = re.compile(r"^[-*] (.*)$")
 HEADING = re.compile(r"^(#{1,6}) (.*)$")
+# A task item is a bullet with [ ] or [x]; a bare "- [ ]" is an empty item and "- [x](url)" stays a link.
+TASK = re.compile(r"^[-*] \[([ xX])\](?: (.*))?$")
 # An opening fence has no backticks in its info string, so "```x```" on one line stays text.
 FENCE_OPEN = re.compile(r"^```([^`]*)$")
 ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
@@ -20,6 +22,15 @@ ORDERED = re.compile(r"^([0-9]{1,9})\. (.*)$")
 QUOTE = re.compile(r"^>(?: (.*))?$")
 # A rule is one line of three or more of the same marker, so "- - -" stays a bullet.
 RULE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})[ \t]*$")
+# Order matters: a task item is also a bullet, so it is tried first.
+BLOCK_PATTERNS = (
+    ("task", TASK),
+    ("bullet", BULLET),
+    ("ordered", ORDERED),
+    ("heading", HEADING),
+    ("rule", RULE),
+    ("quote", QUOTE),
+)
 LINK = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)", re.IGNORECASE)
 INLINE_TOKEN = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s()]+|mailto:[^\s()]+)\)|\*+|_+", re.IGNORECASE)
 # Jira wiki markup that the Markdown converter keeps as literal text, with the Markdown advice to give.
@@ -115,7 +126,7 @@ def markdown_to_adf(text: str) -> dict[str, Any]:
     """Convert a small Markdown subset to ADF and keep everything else as plain text.
 
     Support headings, flat lists (dash or star bullets), fenced code blocks, blockquotes, rules,
-    inline code, emphasis, and explicit safe links.
+    task lists, inline code, emphasis, and explicit safe links.
     Other single line breaks become hard breaks; bare URLs and issue keys stay text.
     """
     # Stripping first keeps a leading or trailing newline from adding a hard break or empty paragraph.
@@ -173,6 +184,20 @@ def _heading_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
     ]
 
 
+def _task_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
+    """Build one task list whose ids come from the block position, so output is stable and unique."""
+    matches = [match for line in lines if (match := TASK.match(line)) is not None]
+    items = []
+    for number, match in enumerate(matches, start=1):
+        state = "TODO" if match.group(1) == " " else "DONE"
+        item: dict[str, Any] = {"type": "taskItem", "attrs": {"localId": f"task-{position}-{number}", "state": state}}
+        # ADF task items hold inline nodes directly, with no paragraph.
+        if content := _paragraph([match.group(2) or ""]).get("content"):
+            item["content"] = content
+        items.append(item)
+    return [{"type": "taskList", "attrs": {"localId": f"tasklist-{position}"}, "content": items}]
+
+
 def _quote_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
     """Build one blockquote with a single paragraph from consecutive quoted lines."""
     texts = [match.group(1) or "" for line in lines if (match := QUOTE.match(line)) is not None]
@@ -191,6 +216,7 @@ def _paragraph_blocks(lines: list[str], position: int) -> list[dict[str, Any]]:
 
 # Each builder takes the grouped lines and the number of blocks built so far, which keeps generated ids unique.
 BLOCK_BUILDERS = {
+    "task": _task_blocks,
     "bullet": _bullet_blocks,
     "ordered": _ordered_blocks,
     "heading": _heading_blocks,
@@ -202,17 +228,7 @@ BLOCK_BUILDERS = {
 
 def _block_kind(line: str) -> str:
     """Classify a single supported block without interpreting nested Markdown."""
-    if BULLET.match(line):
-        return "bullet"
-    if ORDERED.match(line):
-        return "ordered"
-    if HEADING.match(line):
-        return "heading"
-    if RULE.match(line):
-        return "rule"
-    if QUOTE.match(line):
-        return "quote"
-    return "paragraph"
+    return next((kind for kind, pattern in BLOCK_PATTERNS if pattern.match(line)), "paragraph")
 
 
 def _paragraph(lines: list[str]) -> dict[str, Any]:
