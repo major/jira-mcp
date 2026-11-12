@@ -203,9 +203,10 @@ async def create_issue(  # noqa: C901, PLR0913 - Explicit arguments and checks k
 
     After local checks, it reads create-field metadata and reports missing required fields,
     unavailable fields, and disallowed option values before any write. validate_only
-    returns the exact fields that would be sent and never writes, even when creation
-    is disabled. Otherwise this needs JIRA_ENABLE_ISSUE_CREATION=true, may trigger
-    notifications or automation, and makes exactly one POST that is never retried.
+    returns the exact fields that would be sent and creation_enabled on success, and
+    never writes, even when creation is disabled. Use get_server_capabilities() before
+    claiming creation is disabled. Creation requires JIRA_ENABLE_ISSUE_CREATION=true,
+    may trigger notifications or automation, and makes exactly one POST that is never retried.
     "No issue was created" errors are safe to fix and retry. If the result says
     creation is not confirmed, the issue may already exist: verify Jira before retrying.
     """

@@ -92,8 +92,9 @@ async def update_issue(  # noqa: C901, PLR0912, PLR0913
     or removals, deduplicated in order; overlapping additions and removals are rejected.
     At least one change is required.
 
-    Preview does not check the precondition or Jira permissions. Edits require
-    JIRA_ENABLE_ISSUE_EDITS=true and a server restart. The optional summary guard
+    Preview does not check the precondition or Jira permissions and returns
+    edits_enabled on success. Use get_server_capabilities() before claiming edits are
+    disabled. Edits require JIRA_ENABLE_ISSUE_EDITS=true and a server restart. The optional summary guard
     checks only the summary at read time, not description edits; it is not atomic
     and another update can race between the GET and PUT. Execution makes one PUT,
     may trigger notifications or automation, and never retries. Inspect get_issue
