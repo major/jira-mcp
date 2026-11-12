@@ -184,6 +184,58 @@ def test_server_instructions_explain_field_discovery():
     assert "before retrying" in instructions
 
 
+def test_server_instructions_distinguish_enablement_from_authorization():
+    """Direct agents to runtime state instead of treating defaults as active configuration."""
+    # Arrange
+    instructions = mcp.instructions or ""
+
+    # Act
+    guidance = instructions.split("Attachment metadata", 1)[0]
+
+    # Assert
+    assert "get_server_capabilities()" in guidance
+    assert "before claiming" in guidance
+    assert "not Jira permissions or user authorization" in guidance
+    assert "disabled by default" not in guidance
+    assert "Only perform writes when the user has authorized the intended change" in guidance
+
+
+@pytest.mark.parametrize("creation_enabled", [False, True])
+async def test_capabilities_agree_with_independent_write_previews(mock_jira, monkeypatch, creation_enabled):
+    """Keep local discovery consistent with the flags used by both write tools."""
+    # Arrange
+    requests, responses = mock_jira
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_CREATION", str(creation_enabled))
+    monkeypatch.setenv("JIRA_ENABLE_ISSUE_EDITS", str(not creation_enabled))
+    responses.append(
+        httpx2.Response(
+            200,
+            json={
+                "startAt": 0,
+                "maxResults": 100,
+                "total": 1,
+                "fields": [{"key": "summary", "name": "Summary", "required": True}],
+            },
+        )
+    )
+
+    # Act
+    async with Client(mcp) as client:
+        capabilities = await client.call_tool("get_server_capabilities", {}, raise_on_error=False)
+        creation = await client.call_tool(
+            "create_issue", {"project": "TEAM", "issue_type_id": "9", "summary": "Title", "validate_only": True}
+        )
+        edits = await client.call_tool("update_issue", {"issue": "TEAM-1", "summary": "Title", "validate_only": True})
+
+    # Assert
+    assert not capabilities.is_error
+    assert capabilities.structured_content == {
+        "issue_creation_enabled": creation.structured_content["creation_enabled"],
+        "issue_edits_enabled": edits.structured_content["edits_enabled"],
+    }
+    assert [request.method for request in requests] == ["GET"]
+
+
 async def test_unexpected_errors_are_masked(mock_jira, monkeypatch):
     """Hide unexpected exception text while keeping the call an error result."""
     # Arrange

@@ -56,6 +56,11 @@ never write. Invalid values prevent tool calls until corrected.
 Creation can trigger Jira notifications and automation.
 Only create an issue when the user explicitly requests it.
 
+Call `get_server_capabilities()` to check the running server's actual local issue
+creation and edit flags. It makes no Jira requests and reports the startup snapshot
+until the server restarts. These flags do not establish Jira permissions or user
+authorization. Use previews to inspect proposed payloads, not as a configuration probe.
+
 The server does not use browser sign-in or local Jira CLI credentials. Use a
 password or secret manager to inject the token as an exported environment
 variable before launching the client. Keep literal tokens out of checked-in or
@@ -194,6 +199,7 @@ clients distinguish writes, but do not enforce user approval on their own.
 | `add_issue_attachments` | Upload files or preview them. **Writes.** |
 | `delete_attachment` | Irreversibly delete an attachment. **Writes.** |
 | `create_issue` | Validate and create one issue, or preview it with `validate_only`. **Writes.** |
+| `get_server_capabilities` | Discover local issue creation and edit enablement. |
 | `get_current_user` | Identify the account authenticated by the configured credentials. |
 | `get_issue` | Read ticket fields, description, and optional field metadata. |
 | `update_issue` | **Writes.** Update core fields and incrementally add or remove labels, or preview the payload. |
